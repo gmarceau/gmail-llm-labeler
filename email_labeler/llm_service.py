@@ -54,8 +54,8 @@ class LLMService:
         self,
         categories: List[str],
         max_content_length: int = 4000,
-        llm_client: OpenAI = None,
-        model: str = None,
+        llm_client: Optional[OpenAI] = None,
+        model: Optional[str] = None,
         lazy_init: bool = False,
         system_prompt: Optional[str] = None,
         user_prompt: Optional[str] = None,
@@ -208,14 +208,15 @@ class LLMService:
             completion_kwargs["response_format"] = {"type": "json_object"}
 
         logging.debug(f"Calling {LLM_SERVICE} API with model {self.model}")
-        response = self.llm_client.chat.completions.create(**completion_kwargs)
+        assert self.llm_client is not None, "LLM client must be initialized"
+        response = self.llm_client.chat.completions.create(**completion_kwargs)  # type: ignore[call-overload]
 
         end_time = time.time()
 
         # Log the interaction
         self._log_interaction(start_time, end_time, response.choices[0].message.content)
 
-        return response.choices[0].message.content
+        return response.choices[0].message.content  # type: ignore[no-any-return]
 
     def _parse_response(self, response_text: str) -> Tuple[str, str]:
         """Parse and validate the LLM response."""
