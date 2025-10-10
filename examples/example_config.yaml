@@ -39,6 +39,24 @@ pipeline:
     - Low quality
     - Notifications
     - Other
+    # Optional: Custom prompts with templating support
+    # Available template variables: {categories}, {email_content}, {reasoning}
+    # If not specified, uses default prompts
+    # system_prompt: "You are an email categorization assistant. Always respond with a valid JSON object containing 'category' and 'explanation' fields."
+    # user_prompt: |
+    #   Categorize this email into exactly ONE of these categories:
+    #
+    #   {categories}
+    #
+    #   Email content:
+    #   {email_content}
+    #
+    #   Respond with a JSON object:
+    #   {{
+    #       "explanation": "<brief reason for this categorization>",
+    #       "category": "<exact category name from the list>",
+    #
+    #   }}
   load:
     apply_labels: true
     create_missing_labels: true

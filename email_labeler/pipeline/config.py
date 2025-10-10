@@ -43,6 +43,8 @@ class TransformConfig:
             "Other",
         ]
     )
+    system_prompt: Optional[str] = None  # Custom system prompt (supports templating)
+    user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
 
 
 @dataclass
@@ -172,6 +174,8 @@ class PipelineConfig:
                     "timeout": self.transform.timeout,
                     "skip_on_error": self.transform.skip_on_error,
                     "categories": self.transform.categories,
+                    "system_prompt": self.transform.system_prompt,
+                    "user_prompt": self.transform.user_prompt,
                 },
                 "load": {
                     "apply_labels": self.load.apply_labels,

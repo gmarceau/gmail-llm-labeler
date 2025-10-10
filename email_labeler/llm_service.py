@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
@@ -20,6 +20,33 @@ from .config import (
 )
 
 
+class LLMCategorizationError(Exception):
+    """Exception raised when LLM categorization fails."""
+
+    pass
+
+
+# Default prompts
+DEFAULT_SYSTEM_PROMPT = "You are an email categorization assistant. Always respond with a valid JSON object containing 'category' and 'explanation' fields."
+
+DEFAULT_SYSTEM_PROMPT_GPT_OSS = """Reasoning: {reasoning}
+You are an email categorization assistant.An email that is a notification should always be categorized as 'Notifications'.Always respond with a valid JSON object containing 'category' and 'explanation' fields."""
+
+DEFAULT_USER_PROMPT = """Categorize this email into exactly ONE of these categories:
+
+{categories}
+
+Email content:
+{email_content}
+
+Respond with a JSON object:
+{{
+    "explanation": "<brief reason for this categorization>",
+    "category": "<exact category name from the list>",
+
+}}"""
+
+
 class LLMService:
     """Handles email categorization using LLM (OpenAI or Ollama)."""
 
@@ -30,6 +57,8 @@ class LLMService:
         llm_client: Optional[OpenAI] = None,
         model: Optional[str] = None,
         lazy_init: bool = False,
+        system_prompt: Optional[str] = None,
+        user_prompt: Optional[str] = None,
     ):
         """Initialize the LLM client.
 
@@ -39,10 +68,14 @@ class LLMService:
             llm_client: Optional OpenAI client instance. If not provided, creates based on config.
             model: Optional model name. If not provided, uses config defaults.
             lazy_init: If True, delay LLM client initialization until first use.
+            system_prompt: Optional custom system prompt with template support.
+            user_prompt: Optional custom user prompt with template support.
         """
         self.categories = categories
         self.max_content_length = max_content_length
         self._lazy_init = lazy_init
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
         self.llm_client: Optional[OpenAI]
         if llm_client is not None:
             self.llm_client = llm_client
@@ -70,10 +103,32 @@ class LLMService:
             logging.info(f"Using OpenAI with model {OPENAI_MODEL}")
             return OpenAI(api_key=OPENAI_API_KEY)
 
+    def _render_template(self, template: str, variables: Dict[str, str]) -> str:
+        """Render a template string with provided variables.
+
+        Args:
+            template: Template string with {variable} placeholders.
+            variables: Dictionary of variable names to values.
+
+        Returns:
+            Rendered template string.
+        """
+        try:
+            return template.format(**variables)
+        except KeyError as e:
+            logging.warning(f"Template variable {e} not found, using empty string")
+            # Try again with missing variables as empty strings
+            import re
+
+            var_names = re.findall(r"\{(\w+)\}", template)
+            safe_vars = {k: variables.get(k, "") for k in var_names}
+            return template.format(**safe_vars)
+
     def categorize_email(self, email_content: str) -> Tuple[str, str]:
         """
         Categorizes an email using the configured LLM.
         Returns tuple of (category, explanation)
+        Raises LLMCategorizationError if the LLM service fails.
         """
         self._ensure_llm_client()
         # Truncate very long emails
@@ -99,45 +154,41 @@ class LLMService:
             logging.error(f"Error in LLM categorization with {self.model}: {str(e)}")
             logging.exception("Full exception details:")
             self._log_error(email_content, str(e))
-            return "Other", f"Error: {str(e)}"
+            raise LLMCategorizationError(f"LLM categorization failed: {str(e)}") from e
 
     def _build_messages(self, email_content: str) -> list:
         """Build messages for the LLM based on the service type."""
         messages = []
 
-        if LLM_SERVICE == "Ollama" and "gpt-oss" in self.model:
-            # Special handling for gpt-oss models
-            system_content = f"Reasoning: {GPT_OSS_REASONING}\n"
-            system_content += (
-                "You are an email categorization assistant."
-                "An email that is a notification should always be categorized as 'Notifications'."
-                "Always respond with a valid JSON object containing 'category' and 'explanation' fields."
-            )
-            messages.append({"role": "system", "content": system_content})
+        # Prepare template variables
+        template_vars = {
+            "categories": ", ".join(self.categories),
+            "email_content": email_content,
+            "reasoning": GPT_OSS_REASONING,
+        }
+
+        # Determine which system prompt to use
+        if self.system_prompt:
+            # Use custom system prompt
+            system_content = self._render_template(self.system_prompt, template_vars)
+        elif LLM_SERVICE == "Ollama" and "gpt-oss" in self.model:
+            # Use default GPT-OSS system prompt
+            system_content = self._render_template(DEFAULT_SYSTEM_PROMPT_GPT_OSS, template_vars)
         else:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": "You are an email categorization assistant. Always respond with a valid JSON object containing 'category' and 'explanation' fields.",
-                }
-            )
+            # Use default system prompt
+            system_content = self._render_template(DEFAULT_SYSTEM_PROMPT, template_vars)
+
+        messages.append({"role": "system", "content": system_content})
 
         # User prompt
-        user_prompt = f"""Categorize this email into exactly ONE of these categories:
+        if self.user_prompt:
+            # Use custom user prompt
+            user_content = self._render_template(self.user_prompt, template_vars)
+        else:
+            # Use default user prompt
+            user_content = self._render_template(DEFAULT_USER_PROMPT, template_vars)
 
-{", ".join(self.categories)}
-
-Email content:
-{email_content}
-
-Respond with a JSON object:
-{{
-    "explanation": "<brief reason for this categorization>",
-    "category": "<exact category name from the list>",
-
-}}"""
-
-        messages.append({"role": "user", "content": user_prompt})
+        messages.append({"role": "user", "content": user_content})
         return messages
 
     def _call_llm(self, messages: list) -> str:

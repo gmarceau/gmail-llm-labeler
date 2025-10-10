@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from email_labeler.llm_service import LLMCategorizationError
 from email_labeler.pipeline.base import (
     ActionResult,
     EmailRecord,
@@ -192,7 +193,7 @@ class TestTransformStage:
 
         # First email fails, others succeed
         llm_service.categorize_email.side_effect = [
-            Exception("LLM Error"),
+            LLMCategorizationError("LLM Error"),
             ("Newsletters", "Marketing content"),
             ("Personal", "Personal message"),
         ]
@@ -242,7 +243,7 @@ class TestTransformStage:
         stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
 
         # First email fails, should be skipped due to skip_on_error=True
-        llm_service.categorize_email.side_effect = Exception("Temporary error")
+        llm_service.categorize_email.side_effect = LLMCategorizationError("Temporary error")
 
         enriched_emails = stage.execute([sample_email_records[0]], pipeline_context_no_test_mode)
 
@@ -262,9 +263,7 @@ class TestTransformStage:
         """Test handling of LLM timeouts."""
         stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
 
-        from concurrent.futures import TimeoutError
-
-        llm_service.categorize_email.side_effect = TimeoutError("LLM timeout")
+        llm_service.categorize_email.side_effect = LLMCategorizationError("LLM timeout")
 
         enriched_emails = stage.execute(sample_email_records, pipeline_context_no_test_mode)
 
