@@ -7,7 +7,7 @@ from typing import List, Optional
 from .config import LLM_SERVICE, OLLAMA_MODEL, OPENAI_MODEL, PROCESSED_LABEL
 from .database import EmailDatabase
 from .email_processor import EmailProcessor
-from .llm_service import LLMService
+from .llm_service import LLMCategorizationError, LLMService
 from .metrics import MetricsTracker
 
 
@@ -104,7 +104,12 @@ class EmailAutoLabeler:
         email_content = self.email_processor.prepare_email_content(email_tuple)
 
         # Categorize the email
-        category, explanation = self.llm_service.categorize_email(email_content)
+        try:
+            category, explanation = self.llm_service.categorize_email(email_content)
+        except LLMCategorizationError as e:
+            logging.error(f"LLM categorization failed for email {email_id}: {e}")
+            return None
+
         processing_time = time.time() - start_time
 
         # Track test metrics if in test mode

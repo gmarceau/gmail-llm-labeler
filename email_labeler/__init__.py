@@ -13,7 +13,7 @@ from .factory import (
     create_test_dependencies,
 )
 from .labeler import EmailAutoLabeler
-from .llm_service import LLMService
+from .llm_service import LLMCategorizationError, LLMService
 from .metrics import MetricsTracker
 
 __version__ = "2.1.0"
@@ -21,6 +21,7 @@ __all__ = [
     "EmailAutoLabeler",
     "EmailDatabase",
     "LLMService",
+    "LLMCategorizationError",
     "EmailProcessor",
     "MetricsTracker",
     # Factory functions

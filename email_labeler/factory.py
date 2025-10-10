@@ -104,6 +104,8 @@ def create_llm_service(
     llm_client: Optional[OpenAI] = None,
     model: Optional[str] = None,
     service: str = LLM_SERVICE,
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
 ) -> LLMService:
     """Create an LLMService instance with optional client injection.
 
@@ -113,6 +115,8 @@ def create_llm_service(
         llm_client: Optional OpenAI client to inject.
         model: Optional model name override.
         service: LLM service type (used if llm_client is None).
+        system_prompt: Optional custom system prompt with template support.
+        user_prompt: Optional custom user prompt with template support.
 
     Returns:
         LLMService instance.
@@ -126,6 +130,8 @@ def create_llm_service(
         max_content_length=max_content_length,
         llm_client=llm_client,
         model=model,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
     )
 
 

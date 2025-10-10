@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from email_labeler.llm_service import LLMService
+from email_labeler.llm_service import LLMCategorizationError, LLMService
 
 # Test categories for all tests
 TEST_CATEGORIES = ["Marketing", "Work", "Personal", "Bills", "Newsletters", "Other"]
@@ -150,10 +150,11 @@ class TestLLMService:
             model="gpt-3.5-turbo",
         )
 
-        category, explanation = llm_service.categorize_email(email_content)
+        with pytest.raises(LLMCategorizationError) as exc_info:
+            llm_service.categorize_email(email_content)
 
-        assert category == "Other"
-        assert "Error: API Error" in explanation
+        assert "LLM categorization failed" in str(exc_info.value)
+        assert "API Error" in str(exc_info.value)
 
     def test_categorize_email_invalid_category(self, mock_openai_client):
         """Test handling of invalid category in response."""
@@ -327,10 +328,10 @@ class TestLLMService:
             model="gpt-3.5-turbo",
         )
 
-        category, explanation = llm_service.categorize_email(email_content)
+        with pytest.raises(LLMCategorizationError) as exc_info:
+            llm_service.categorize_email(email_content)
 
-        assert category == "Other"
-        assert "Error: Request timed out." in explanation
+        assert "LLM categorization failed" in str(exc_info.value)
 
     def test_rate_limit_handling(self, mock_openai_client):
         """Test handling of rate limit errors."""
@@ -349,10 +350,10 @@ class TestLLMService:
             model="gpt-3.5-turbo",
         )
 
-        category, explanation = llm_service.categorize_email(email_content)
+        with pytest.raises(LLMCategorizationError) as exc_info:
+            llm_service.categorize_email(email_content)
 
-        assert category == "Other"
-        assert "Error:" in explanation
+        assert "LLM categorization failed" in str(exc_info.value)
 
     def test_unsupported_service_fallback(self):
         """Test handling of unsupported service configurations."""
@@ -363,3 +364,189 @@ class TestLLMService:
             LLMService(categories=TEST_CATEGORIES, max_content_length=TEST_MAX_CONTENT_LENGTH)
             # Should fall through to OpenAI case since it's not "Ollama"
             mock_openai.assert_called_with(api_key="test-key")
+
+    def test_custom_system_prompt(self, mock_openai_client):
+        """Test using a custom system prompt."""
+        custom_system = "You are a specialized email classifier."
+        email_content = "Test email"
+        response = {"category": "Work", "explanation": "Test"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        llm_service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+            system_prompt=custom_system,
+        )
+
+        llm_service.categorize_email(email_content)
+
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == custom_system
+
+    def test_custom_user_prompt(self, mock_openai_client):
+        """Test using a custom user prompt with template variables."""
+        custom_user = "Classify: {email_content}. Categories: {categories}"
+        email_content = "Test email"
+        response = {"category": "Work", "explanation": "Test"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        llm_service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+            user_prompt=custom_user,
+        )
+
+        llm_service.categorize_email(email_content)
+
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+        assert messages[1]["role"] == "user"
+        # Check that template variables were substituted
+        assert "Test email" in messages[1]["content"]
+        assert "Marketing" in messages[1]["content"]
+
+    def test_template_variable_substitution(self, mock_openai_client):
+        """Test that template variables are properly substituted."""
+        custom_user = "Email: {email_content}\nCategories: {categories}"
+        email_content = "Meeting tomorrow"
+        response = {"category": "Work", "explanation": "Test"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        llm_service = LLMService(
+            categories=["Work", "Personal"],
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+            user_prompt=custom_user,
+        )
+
+        llm_service.categorize_email(email_content)
+
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+        user_message = messages[1]["content"]
+
+        assert "Email: Meeting tomorrow" in user_message
+        assert "Categories: Work, Personal" in user_message
+
+    def test_custom_prompts_both(self, mock_openai_client):
+        """Test using both custom system and user prompts."""
+        custom_system = "You are a test assistant."
+        custom_user = "Process: {email_content}"
+        email_content = "Test email"
+        response = {"category": "Work", "explanation": "Test"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        llm_service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+            system_prompt=custom_system,
+            user_prompt=custom_user,
+        )
+
+        llm_service.categorize_email(email_content)
+
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+
+        assert messages[0]["content"] == custom_system
+        assert "Process: Test email" in messages[1]["content"]
+
+    def test_invalid_template_variable(self, mock_openai_client):
+        """Test handling of invalid template variables."""
+        custom_user = "Content: {email_content}, Invalid: {nonexistent_var}"
+        email_content = "Test email"
+        response = {"category": "Work", "explanation": "Test"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        llm_service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+            user_prompt=custom_user,
+        )
+
+        # Should not raise an error, but log a warning
+        category, explanation = llm_service.categorize_email(email_content)
+
+        assert category == "Work"
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+        # Invalid variable should be replaced with empty string
+        assert "Invalid: " in messages[1]["content"]
+
+    def test_default_prompts_still_work(self, mock_openai_client):
+        """Test that default prompts still work when no custom prompts provided."""
+        email_content = "Test email"
+        response = {"category": "Work", "explanation": "Test"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        llm_service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+        )
+
+        category, explanation = llm_service.categorize_email(email_content)
+
+        assert category == "Work"
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args[1]["messages"]
+
+        # Check default prompts are used
+        assert "email categorization assistant" in messages[0]["content"].lower()
+        assert "Categorize this email" in messages[1]["content"]
+
+    def test_reasoning_template_variable(self, mock_openai_client):
+        """Test that reasoning template variable works for GPT-OSS models."""
+        custom_system = "Reasoning: {reasoning}\nYou are an assistant."
+        email_content = "Test email"
+        response = {"category": "Work", "explanation": "Test"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        with patch("email_labeler.llm_service.GPT_OSS_REASONING", "high"):
+            llm_service = LLMService(
+                categories=TEST_CATEGORIES,
+                max_content_length=TEST_MAX_CONTENT_LENGTH,
+                llm_client=mock_openai_client,
+                model="gpt-oss-instruct",
+                system_prompt=custom_system,
+            )
+
+            llm_service.categorize_email(email_content)
+
+            call_args = mock_openai_client.chat.completions.create.call_args
+            messages = call_args[1]["messages"]
+
+            assert "Reasoning: high" in messages[0]["content"]

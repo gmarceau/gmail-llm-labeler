@@ -50,11 +50,11 @@ pipeline:
     # Note: If you have a specific GPT-OSS version, specify it like:
     # model: "gpt-oss-qwen-2.5-32b"
     # model: "gpt-oss-llama-3.1-70b"
-    
+
     max_content_length: 6000  # Truncate long emails
     timeout: 60  # Longer timeout for local models (adjust based on your hardware)
     skip_on_error: true  # Continue processing if one email fails
-    
+
     # Email categories - customize these for your needs
     categories:
       - "Marketing"
@@ -70,6 +70,29 @@ pipeline:
       - "Low quality"
       - "Notifications"
       - "Other"
+
+    # Optional: Custom prompts with templating support
+    # Available template variables: {categories}, {email_content}, {reasoning}
+    # If not specified, uses default prompts (including GPT-OSS specific prompt for gpt-oss models)
+    #
+    # Example: Custom system prompt
+    # system_prompt: "You are an email categorization assistant. Always respond with a valid JSON object containing 'category' and 'explanation' fields."
+    #
+    # Example: Custom user prompt
+    # user_prompt: |
+    #   Categorize this email into exactly ONE of these categories:
+    #
+    #   {categories}
+    #
+    #   Email content:
+    #   {email_content}
+    #
+    #   Respond with a JSON object:
+    #   {{
+    #       "explanation": "<brief reason for this categorization>",
+    #       "category": "<exact category name from the list>",
+    #
+    #   }}
     
   # Load stage configuration - what actions to take per category
   load:

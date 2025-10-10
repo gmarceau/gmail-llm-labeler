@@ -32,7 +32,10 @@ class TransformStage(PipelineStage):
         super().__init__()
         self.config = config
         self.llm_service = llm_service or LLMService(
-            categories=config.categories, max_content_length=config.max_content_length
+            categories=config.categories,
+            max_content_length=config.max_content_length,
+            system_prompt=config.system_prompt,
+            user_prompt=config.user_prompt,
         )
         self.email_processor = email_processor or EmailProcessor()
 
