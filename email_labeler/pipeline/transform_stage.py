@@ -135,8 +135,8 @@ class TransformStage(PipelineStage):
 
         # Validate category
         if category not in self.config.categories:
-            logger.warning(f"Unknown category '{category}' for email {email.id}, using 'Other'")
-            category = "Other"
+            logger.warning(f"Unknown category '{category}' for email {email.id}, using 'main'")
+            category = "main"
 
         # Calculate confidence (simple heuristic based on explanation length)
         confidence = self._calculate_confidence(category, explanation)
