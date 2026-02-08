@@ -111,10 +111,17 @@ class TransformStage(PipelineStage):
         # Prepare content
         clean_content = self.email_processor.strip_html(email.content)
 
-        # Truncate if needed
+        # Smart truncation: keep beginning + end to preserve footer (unsubscribe, signatures)
         if len(clean_content) > self.config.max_content_length:
-            clean_content = clean_content[: self.config.max_content_length] + "..."
-            logger.debug(f"Truncated email content to {self.config.max_content_length} chars")
+            max_len = self.config.max_content_length
+            keep_start = int(max_len * 0.7)  # 70% from beginning
+            keep_end = int(max_len * 0.3)    # 30% from end
+            clean_content = (
+                clean_content[:keep_start]
+                + "\n\n...[middle content truncated]...\n\n"
+                + clean_content[-keep_end:]
+            )
+            logger.debug(f"Smart truncated email: kept first {keep_start} and last {keep_end} chars")
 
         email_content = f"Subject: {email.subject}\nFrom: {email.sender}\n\n{clean_content}"
 
