@@ -22,7 +22,7 @@
 # These settings keep files in the project directory for local development
 paths:
   database_file: ./email_pipeline.db
-  llm_log_file: ./llm_interactions.jsonl
+  llm_log_file: ./llm_interactions.json
   error_log_file: ./categorization_errors.log
   test_output_file: ./test_results.csv
   test_summary_file: ./test_summary.json

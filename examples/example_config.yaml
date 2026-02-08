@@ -5,7 +5,7 @@
 # You can also set these via environment variables (see .env.local.example)
 paths:
   database_file: email_pipeline.db  # Can be relative or absolute path
-  llm_log_file: logs/llm_interactions.jsonl
+  llm_log_file: logs/llm_interactions.json
   error_log_file: logs/categorization_errors.log
   test_output_file: test_results.csv
   test_summary_file: test_summary.json

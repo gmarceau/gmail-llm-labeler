@@ -155,7 +155,7 @@ class LLMService:
 
         try:
             # Make API call
-            response = self._call_llm(messages)
+            response = self._call_llm(messages, email_content)
 
             # Parse and validate response (pass subject for logging)
             category, explanation = self._parse_response(response, subject)
@@ -203,7 +203,7 @@ class LLMService:
         messages.append({"role": "user", "content": user_content})
         return messages
 
-    def _call_llm(self, messages: list) -> str:
+    def _call_llm(self, messages: list, email_content: str) -> str:
         """Make the API call to the LLM."""
         start_time = time.time()
 
@@ -226,7 +226,7 @@ class LLMService:
         end_time = time.time()
 
         # Log the interaction
-        self._log_interaction(start_time, end_time, response.choices[0].message.content)
+        self._log_interaction(start_time, end_time, response.choices[0].message.content, email_content)
 
         return response.choices[0].message.content  # type: ignore[no-any-return]
 
@@ -264,7 +264,7 @@ class LLMService:
             logging.warning(f"Category '{category}' not in predefined list")
             return "Other", f"Unknown category: {category}"
 
-    def _log_interaction(self, start_time: float, end_time: float, response: str):
+    def _log_interaction(self, start_time: float, end_time: float, response: str, email_content: str):
         """Log the LLM interaction for debugging."""
         log_entry = {
             "request_timestamp": start_time,
@@ -273,9 +273,10 @@ class LLMService:
             "model": self.model,
             "service": LLM_SERVICE,
             "response": response,
+            "processed_email": email_content,
         }
         with open(LLM_LOG_FILE, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
+            f.write(json.dumps(log_entry, indent=2) + "\n")
 
     def _log_error(self, email_content: str, error: str):
         """Log categorization errors for debugging."""

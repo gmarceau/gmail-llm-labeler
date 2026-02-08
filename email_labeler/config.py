@@ -84,7 +84,7 @@ class PathConfig:
         self.llm_log_file = self._resolve_path(
             os.getenv("LLM_LOG_FILE"),
             yaml_paths.get("llm_log_file"),
-            default_log_dir / "llm_interactions.jsonl",
+            default_log_dir / "llm_interactions.json",
         )
 
         self.error_log_file = self._resolve_path(
