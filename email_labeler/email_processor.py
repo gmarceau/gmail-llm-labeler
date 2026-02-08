@@ -40,8 +40,33 @@ class EmailProcessor:
             self.gmail = get_gmail_client(port=8080)
 
     def strip_html(self, html_content: str) -> str:
-        """Remove HTML tags and extract text content."""
+        """Remove HTML tags and extract text content. Replace images with size-based placeholders."""
         soup = BeautifulSoup(html_content, "html.parser")
+        
+        # Replace images with size-based placeholders before extracting text
+        for img in soup.find_all('img'):
+            width = img.get('width')
+            height = img.get('height')
+            
+            if width and height:
+                try:
+                    w = int(width)
+                    h = int(height)
+                    # Categorize by size
+                    if w <= 10 and h <= 10:
+                        placeholder = "[TRACKING-PIXEL]"
+                    elif w >= 500 or h >= 400:
+                        placeholder = f"[LARGE-IMAGE {width}x{height}]"
+                    else:
+                        placeholder = f"[IMAGE {width}x{height}]"
+                except ValueError:
+                    # Non-numeric dimensions (e.g., "100%")
+                    placeholder = f"[IMAGE {width}x{height}]"
+            else:
+                placeholder = "[IMAGE]"
+            
+            img.replace_with(placeholder)
+        
         text_content = soup.get_text(separator=" ", strip=True)
         text_content = re.sub(r"\s+", " ", text_content).strip()
         return text_content
