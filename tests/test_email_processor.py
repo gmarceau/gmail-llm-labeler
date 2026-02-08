@@ -28,13 +28,20 @@ class TestEmailProcessor:
         mock_get_gmail_client.assert_called_once_with(port=8080)
 
     def test_strip_html(self, mock_gmail_client):
-        """Test HTML stripping functionality."""
+        """Test HTML stripping functionality with image placeholder replacement."""
         processor = EmailProcessor(gmail_client=mock_gmail_client)
 
         html_content = (
-            "<html><body><h1>Hello</h1><p>World!</p><div>  Extra   spaces  </div></body></html>"
+            "<html><body>"
+            '<img src="logo.png" width="150" height="50">'
+            "<h1>Hello</h1><p>World!</p>"
+            '<img src="banner.jpg" width="600" height="400">'
+            '<img src="pixel.gif" width="1" height="1">'
+            '<img src="unknown.jpg">'
+            "<div>  Extra   spaces  </div>"
+            "</body></html>"
         )
-        expected = "Hello World! Extra spaces"
+        expected = "[IMAGE 150x50] Hello World! [LARGE-IMAGE 600x400] [TRACKING-PIXEL] [IMAGE] Extra spaces"
 
         result = processor.strip_html(html_content)
 

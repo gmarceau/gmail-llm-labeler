@@ -131,12 +131,24 @@ class LLMService:
         Raises LLMCategorizationError if the LLM service fails.
         """
         self._ensure_llm_client()
-        # Truncate very long emails
+        
+        # Extract subject for debugging (email_content format: "Subject: ...\nFrom: ...\n\n...")
+        subject = "Unknown"
+        if email_content.startswith("Subject: "):
+            subject_line = email_content.split("\n", 1)[0]
+            subject = subject_line.replace("Subject: ", "").strip()
+        
+        # Smart truncation: keep beginning + end to preserve footer (unsubscribe, signatures)
         if len(email_content) > self.max_content_length:
+            max_len = self.max_content_length
+            keep_start = int(max_len * 0.6)  # 60% from beginning
+            keep_end = int(max_len * 0.4)    # 40% from end
             email_content = (
-                email_content[: self.max_content_length] + "\n[Email truncated for processing]"
+                email_content[:keep_start]
+                + "\n\n...[middle content truncated]...\n\n"
+                + email_content[-keep_end:]
             )
-            logging.debug(f"Truncated email content to {self.max_content_length} characters")
+            logging.debug(f"Smart truncated email: kept first {keep_start} and last {keep_end} chars")
 
         # Build messages
         messages = self._build_messages(email_content)
@@ -145,8 +157,8 @@ class LLMService:
             # Make API call
             response = self._call_llm(messages)
 
-            # Parse and validate response
-            category, explanation = self._parse_response(response)
+            # Parse and validate response (pass subject for logging)
+            category, explanation = self._parse_response(response, subject)
 
             return category, explanation
 
@@ -218,16 +230,17 @@ class LLMService:
 
         return response.choices[0].message.content  # type: ignore[no-any-return]
 
-    def _parse_response(self, response_text: str) -> Tuple[str, str]:
+    def _parse_response(self, response_text: str, subject: str = "Unknown") -> Tuple[str, str]:
         """Parse and validate the LLM response."""
         response_text = response_text.strip()
+        logging.info(f"Subject: {subject}")
         logging.info(f"LLM response: {response_text[:500]}")
 
         # Try to parse as JSON
         try:
             response_json = json.loads(response_text)
             category = response_json.get("category", "").strip()
-            explanation = response_json.get("explanation", "")
+            explanation = response_json.get("explanation", "").strip()
             logging.debug(f"Categorized as: {category} - {explanation}")
         except json.JSONDecodeError:
             logging.warning("Failed to parse JSON response, attempting text extraction")
