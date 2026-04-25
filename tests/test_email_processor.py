@@ -37,11 +37,12 @@ class TestEmailProcessor:
             "<h1>Hello</h1><p>World!</p>"
             '<img src="banner.jpg" width="600" height="400">'
             '<img src="pixel.gif" width="1" height="1">'
-            '<img src="unknown.jpg">'
+            '<img src="unknown.jpg" alt="Unknown Image">'
             "<div>  Extra   spaces  </div>"
+            "Plain text with [image: Icon] here"
             "</body></html>"
         )
-        expected = "[IMAGE 150x50] Hello World! [LARGE-IMAGE 600x400] [TRACKING-PIXEL] [IMAGE] Extra spaces"
+        expected = "[IMAGE 150x50] Hello World! [LARGE-IMAGE 600x400] [TRACKING-PIXEL] [IMAGE: Unknown Image] Extra spaces Plain text with [IMAGE: Icon] here"
 
         result = processor.strip_html(html_content)
 

@@ -166,11 +166,11 @@ def parse_email_body(message_payload: dict) -> str:
     for part in parts:
         mime_type = part.get("mimeType", "")
 
-        # Prefer text/plain over text/html
-        if mime_type == "text/plain" and "data" in part.get("body", {}):
+        # Prefer text/html over text/plain (HTML has image dimensions)
+        if mime_type == "text/html" and "data" in part.get("body", {}):
             body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
             break
-        elif mime_type == "text/html" and not body and "data" in part.get("body", {}):
+        elif mime_type == "text/plain" and not body and "data" in part.get("body", {}):
             body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
         # Handle nested multipart
         elif "parts" in part:
@@ -179,7 +179,7 @@ def parse_email_body(message_payload: dict) -> str:
                     body = base64.urlsafe_b64decode(subpart["body"]["data"]).decode(
                         "utf-8", errors="ignore"
                     )
-                    if subpart.get("mimeType") == "text/plain":
+                    if subpart.get("mimeType") == "text/html":
                         break
 
     return body

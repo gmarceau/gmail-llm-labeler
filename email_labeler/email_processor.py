@@ -47,6 +47,7 @@ class EmailProcessor:
         for img in soup.find_all('img'):
             width = img.get('width')
             height = img.get('height')
+            alt = img.get('alt', '')
             
             if width and height:
                 try:
@@ -63,12 +64,21 @@ class EmailProcessor:
                     # Non-numeric dimensions (e.g., "100%")
                     placeholder = f"[IMAGE {width}x{height}]"
             else:
-                placeholder = "[IMAGE]"
+                # No dimensions - use alt text if available
+                if alt:
+                    placeholder = f"[IMAGE: {alt}]"
+                else:
+                    placeholder = "[IMAGE]"
             
             img.replace_with(placeholder)
         
         text_content = soup.get_text(separator=" ", strip=True)
         text_content = re.sub(r"\s+", " ", text_content).strip()
+        
+        # Handle plain text emails with [image: alt] format (from text/plain MIME parts)
+        # Convert to our standard format: [IMAGE: alt]
+        text_content = re.sub(r'\[image:\s*([^\]]+)\]', r'[IMAGE: \1]', text_content, flags=re.IGNORECASE)
+        
         return text_content
 
     def fetch_emails_from_gmail(
