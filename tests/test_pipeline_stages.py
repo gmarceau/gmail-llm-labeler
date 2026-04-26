@@ -11,6 +11,7 @@ from email_labeler.pipeline.base import (
     EnrichedEmailRecord,
     PipelineContext,
 )
+from email_labeler.pipeline.config import GMAIL_TAB_LABEL_IDS
 from email_labeler.pipeline.extract_stage import ExtractStage
 from email_labeler.pipeline.load_stage import LoadStage
 from email_labeler.pipeline.sync_stage import SyncStage
@@ -353,6 +354,139 @@ class TestLoadStage:
 
         # Should not make actual email processor calls in dry run
         mock_email_processor.add_labels_to_email.assert_not_called()
+
+    def test_apply_category_tab_applies_correct_system_label(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """Test that apply_category_tab adds the correct Gmail system label ID."""
+        pipeline_config.load.default_actions = ["apply_category_tab"]
+        pipeline_config.load.category_tab_map = {"newsletter": "forums"}
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        email = EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category="newsletter",
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+        with patch(
+            "email_labeler.pipeline.load_stage.add_labels_to_email", return_value=True
+        ) as mock_add:
+            results = stage.execute([email], pipeline_context)
+
+        assert results[0].success
+        mock_add.assert_called_once_with(
+            mock_email_processor.gmail, "msg1", ["CATEGORY_FORUMS"]
+        )
+
+    def test_apply_category_tab_no_mapping_succeeds(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """Test apply_category_tab returns True when the email category has no tab mapping."""
+        pipeline_config.load.default_actions = ["apply_category_tab"]
+        pipeline_config.load.category_tab_map = {"newsletter": "forums"}
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        email = EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category="transaction",
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+        with patch(
+            "email_labeler.pipeline.load_stage.add_labels_to_email", return_value=True
+        ) as mock_add:
+            results = stage.execute([email], pipeline_context)
+
+        assert results[0].success
+        mock_add.assert_not_called()
+
+    def test_apply_category_tab_invalid_tab_name_fails(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """Test apply_category_tab returns False when the mapped tab name is not a valid Gmail category."""
+        pipeline_config.load.default_actions = ["apply_category_tab"]
+        pipeline_config.load.category_tab_map = {"newsletter": "not_a_real_tab"}
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        email = EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category="newsletter",
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+        results = stage.execute([email], pipeline_context)
+
+        assert not results[0].success
+
+    def test_apply_category_tab_all_production_mappings(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """Test all four production category-to-tab mappings resolve to the right Gmail label IDs."""
+        tab_map = {
+            "transaction": "updates",
+            "marketing": "updates",
+            "newsletter": "forums",
+            "main": "primary",
+        }
+        pipeline_config.load.default_actions = ["apply_category_tab"]
+        pipeline_config.load.category_tab_map = tab_map
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        emails = [
+            EnrichedEmailRecord(
+                id=f"msg{i}",
+                subject="Test",
+                sender="s@example.com",
+                content="c",
+                received_date="2024-01-01T10:00:00Z",
+                category=cat,
+                explanation="x",
+                confidence=0.9,
+                processing_time=1.0,
+            )
+            for i, cat in enumerate(tab_map)
+        ]
+
+        with patch(
+            "email_labeler.pipeline.load_stage.add_labels_to_email", return_value=True
+        ) as mock_add:
+            results = stage.execute(emails, pipeline_context)
+
+        assert all(r.success for r in results)
+        applied_labels = [call[0][2] for call in mock_add.call_args_list]
+        assert applied_labels == [
+            ["CATEGORY_UPDATES"],   # transaction
+            ["CATEGORY_UPDATES"],   # marketing
+            ["CATEGORY_FORUMS"],    # newsletter
+            ["CATEGORY_PERSONAL"],  # main
+        ]
+
+    def test_gmail_tab_label_ids_constant(self):
+        """Test that GMAIL_TAB_LABEL_IDS contains the expected Gmail system label IDs."""
+        assert GMAIL_TAB_LABEL_IDS["primary"] == "CATEGORY_PERSONAL"
+        assert GMAIL_TAB_LABEL_IDS["updates"] == "CATEGORY_UPDATES"
+        assert GMAIL_TAB_LABEL_IDS["forums"] == "CATEGORY_FORUMS"
+        assert GMAIL_TAB_LABEL_IDS["promotions"] == "CATEGORY_PROMOTIONS"
+        assert GMAIL_TAB_LABEL_IDS["social"] == "CATEGORY_SOCIAL"
 
     def test_batch_processing(self, mock_email_processor, pipeline_config, pipeline_context):
         """Test batch processing in load stage."""

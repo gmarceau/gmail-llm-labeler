@@ -47,6 +47,15 @@ class TransformConfig:
     user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
 
 
+GMAIL_TAB_LABEL_IDS = {
+    "primary": "CATEGORY_PERSONAL",
+    "updates": "CATEGORY_UPDATES",
+    "forums": "CATEGORY_FORUMS",
+    "promotions": "CATEGORY_PROMOTIONS",
+    "social": "CATEGORY_SOCIAL",
+}
+
+
 @dataclass
 class LoadConfig:
     """Configuration for the Load stage."""
@@ -64,6 +73,7 @@ class LoadConfig:
         }
     )
     default_actions: List[str] = field(default_factory=lambda: ["apply_label"])
+    category_tab_map: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -182,6 +192,7 @@ class PipelineConfig:
                     "create_missing_labels": self.load.create_missing_labels,
                     "category_actions": self.load.category_actions,
                     "default_actions": self.load.default_actions,
+                    "category_tab_map": self.load.category_tab_map,
                 },
                 "sync": {
                     "database_path": self.sync.database_path,

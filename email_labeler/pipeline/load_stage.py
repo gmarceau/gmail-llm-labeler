@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from ..email_processor import EmailProcessor
 from ..gmail_utils import add_labels_to_email, mark_as_read
 from .base import ActionResult, EnrichedEmailRecord, PipelineContext, PipelineStage
-from .config import LoadConfig
+from .config import GMAIL_TAB_LABEL_IDS, LoadConfig
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +180,9 @@ class LoadStage(PipelineStage):
             elif action == "mark_as_read":
                 return self._mark_as_read(email)
 
+            elif action == "apply_category_tab":
+                return self._apply_category_tab(email)
+
             else:
                 logger.warning(f"Unknown action: {action}")
                 return False
@@ -222,6 +225,18 @@ class LoadStage(PipelineStage):
     def _mark_as_read(self, email: EnrichedEmailRecord) -> bool:
         """Mark email as read."""
         return mark_as_read(self.email_processor.gmail, email.id)
+
+    def _apply_category_tab(self, email: EnrichedEmailRecord) -> bool:
+        """Move email to the configured Gmail inbox tab."""
+        tab_name = self.config.category_tab_map.get(email.category)
+        if not tab_name:
+            logger.debug(f"No category tab mapping for '{email.category}'")
+            return True
+        label_id = GMAIL_TAB_LABEL_IDS.get(tab_name)
+        if not label_id:
+            logger.warning(f"Unknown Gmail tab name: '{tab_name}'")
+            return False
+        return add_labels_to_email(self.email_processor.gmail, email.id, [label_id])
 
     def _count_actions(self, results: List[ActionResult]) -> Dict[str, int]:
         """Count the number of each action type applied."""
