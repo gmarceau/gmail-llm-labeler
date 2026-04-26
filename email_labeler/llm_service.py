@@ -97,7 +97,7 @@ class LLMService:
     def _get_llm_client(self) -> OpenAI:
         """Get the appropriate LLM client based on configuration."""
         if LLM_SERVICE == "Ollama":
-            logging.info(f"Using Ollama at {OLLAMA_BASE_URL} with model {OLLAMA_MODEL}")
+            logging.debug(f"Using Ollama at {OLLAMA_BASE_URL} with model {OLLAMA_MODEL}")
             return OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")  # Dummy key for Ollama
         else:
             logging.info(f"Using OpenAI with model {OPENAI_MODEL}")
@@ -131,13 +131,13 @@ class LLMService:
         Raises LLMCategorizationError if the LLM service fails.
         """
         self._ensure_llm_client()
-        
+
         # Extract subject for debugging (email_content format: "Subject: ...\nFrom: ...\n\n...")
         subject = "Unknown"
         if email_content.startswith("Subject: "):
             subject_line = email_content.split("\n", 1)[0]
             subject = subject_line.replace("Subject: ", "").strip()
-        
+
         # Smart truncation: keep beginning + end to preserve footer (unsubscribe, signatures)
         if len(email_content) > self.max_content_length:
             max_len = self.max_content_length
@@ -233,8 +233,8 @@ class LLMService:
     def _parse_response(self, response_text: str, subject: str = "Unknown") -> Tuple[str, str]:
         """Parse and validate the LLM response."""
         response_text = response_text.strip()
-        logging.info(f"Subject: {subject}")
-        logging.info(f"LLM response: {response_text[:500]}")
+        logging.debug(f"Subject: {subject}")
+        logging.debug(f"LLM response: {response_text[:500]}")
 
         # Try to parse as JSON
         try:

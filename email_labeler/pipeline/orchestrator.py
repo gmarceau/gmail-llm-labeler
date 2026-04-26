@@ -92,6 +92,7 @@ class EmailPipeline:
         logging.basicConfig(
             level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
+        logging.getLogger("httpx").setLevel(logging.WARNING)
 
     def add_stage(
         self,

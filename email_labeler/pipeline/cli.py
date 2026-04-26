@@ -20,6 +20,7 @@ def setup_logging(verbosity: int):
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def create_parser() -> argparse.ArgumentParser:
