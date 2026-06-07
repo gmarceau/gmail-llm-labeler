@@ -35,7 +35,7 @@ class LoadStage(PipelineStage):
             logger.info("No emails to load")
             return []
 
-        logger.info(f"Starting load of {len(input_data)} categorized emails")
+        logger.debug(f"Starting load of {len(input_data)} categorized emails")
         start_time = datetime.now()
 
         results = []

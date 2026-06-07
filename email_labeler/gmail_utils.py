@@ -75,7 +75,7 @@ def get_gmail_client(
                 creds.refresh(Request())
                 logger.info("Credentials refreshed successfully")
             except Exception as e:
-                logger.error(f"Failed to refresh credentials: {e}")
+                logger.info(f"Failed to refresh credentials: {e}")
                 creds = None
 
         if not creds:

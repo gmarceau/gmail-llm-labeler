@@ -10,16 +10,30 @@ from .config import PipelineConfig
 from .orchestrator import EmailPipeline
 
 
+class _ExecuteOnlyInfo(logging.Filter):
+    """At default verbosity, suppress INFO messages not from execute()."""
+    def filter(self, record):
+        if record.levelno != logging.INFO:
+            return True
+        return record.funcName == "execute"
+
+
 def setup_logging(verbosity: int):
     """Set up logging based on verbosity level."""
-    levels = [logging.WARNING, logging.INFO, logging.DEBUG]
+    levels = [logging.INFO, logging.INFO, logging.DEBUG]
     level = levels[min(verbosity, len(levels) - 1)]
 
     logging.basicConfig(
         level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        format="%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    if verbosity == 0:
+        _f = _ExecuteOnlyInfo()
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(_f)
+
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
@@ -137,25 +151,24 @@ def run_pipeline(args):
 
     result = pipeline.run(dry_run=args.dry_run, preview_mode=args.preview, test_mode=args.test)
 
-    # Print summary
-    print("\n" + "=" * 60)
-    print("PIPELINE RUN COMPLETE")
-    print("=" * 60)
-    print(f"Run ID: {result.run_id}")
-    print(f"Duration: {(result.end_time - result.start_time).total_seconds():.2f} seconds")
-    print(f"Stages completed: {', '.join(result.stages_completed)}")
-    print(f"Emails processed: {result.emails_processed}")
-    print(f"Successful: {result.successful}")
-    print(f"Failed: {result.failed}")
+    logging.info("\n" + "=" * 60)
+    logging.info("PIPELINE RUN COMPLETE")
+    logging.info("=" * 60)
+    logging.info(f"Run ID: {result.run_id}")
+    logging.info(f"Duration: {(result.end_time - result.start_time).total_seconds():.2f} seconds")
+    logging.info(f"Stages completed: {', '.join(result.stages_completed)}")
+    logging.info(f"Emails processed: {result.emails_processed}")
+    logging.info(f"Successful: {result.successful}")
+    logging.info(f"Failed: {result.failed}")
 
     if result.errors:
-        print(f"\nErrors: {len(result.errors)}")
+        logging.error(f"Errors: {len(result.errors)}")
         for error in result.errors[:5]:
-            print(f"  - {error}")
+            logging.error(f"  - {error}")
         if len(result.errors) > 5:
-            print(f"  ... and {len(result.errors) - 5} more")
+            logging.error(f"  ... and {len(result.errors) - 5} more")
 
-    print("=" * 60)
+    logging.info("=" * 60)
 
     return 0 if result.failed == 0 else 1
 

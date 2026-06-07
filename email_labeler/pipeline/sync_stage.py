@@ -45,7 +45,7 @@ class SyncStage(PipelineStage):
             logger.info("No results to sync")
             return
 
-        logger.info(f"Starting sync of {len(input_data)} results")
+        logger.debug(f"Starting sync of {len(input_data)} results")
         start_time = datetime.now()
 
         if context.dry_run:

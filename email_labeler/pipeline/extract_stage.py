@@ -35,7 +35,7 @@ class ExtractStage(PipelineStage):
 
     def execute(self, input_data: None, context: PipelineContext) -> List[EmailRecord]:
         """Extract emails based on configuration."""
-        logger.info(f"Starting extraction from source: {self.config.source}")
+        logger.debug(f"Starting extraction from source: {self.config.source}")
         start_time = datetime.now()
 
         try:
