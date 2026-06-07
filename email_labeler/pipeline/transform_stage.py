@@ -69,7 +69,7 @@ class TransformStage(PipelineStage):
             logger.info("No emails to transform")
             return []
 
-        logger.info(f"Starting transformation of {len(input_data)} emails")
+        logger.debug(f"Starting transformation of {len(input_data)} emails")
         start_time = datetime.now()
 
         enriched_emails = []
@@ -77,8 +77,8 @@ class TransformStage(PipelineStage):
         error_count = 0
 
         bar = _SmartBar("Categorizing...", max=len(input_data), initial_eta_seconds=8.0 * len(input_data))
+        bar.start()
         for email in input_data:
-            bar.next()
             try:
                 if context.preview_mode:
                     logger.info(f"PREVIEW: Would categorize email {email.id}: {email.subject}")
@@ -92,12 +92,12 @@ class TransformStage(PipelineStage):
                     )
                 elif context.dry_run:
                     logger.info(f"DRY RUN: Would categorize email {email.id}")
-                    continue
                 else:
                     enriched = self._categorize_email(email, context)
 
-                enriched_emails.append(enriched)
-                success_count += 1
+                if not context.dry_run:
+                    enriched_emails.append(enriched)
+                    success_count += 1
 
             except Exception as e:
                 error_count += 1
@@ -105,10 +105,13 @@ class TransformStage(PipelineStage):
                 logger.error(error_msg)
                 context.add_error(error_msg)
 
-                if self.config.skip_on_error:
+                if self.config.skip_on_error :
                     continue
                 elif not context.config.continue_on_error:
                     raise
+
+            finally:
+                bar.next()
 
         bar.finish()
 
