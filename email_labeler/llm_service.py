@@ -6,7 +6,9 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+import httpx
 from openai import OpenAI
+from plumbum import local
 
 from .config import (
     ERROR_LOG_FILE,
@@ -94,9 +96,33 @@ class LLMService:
             if not self.model:
                 self.model = OLLAMA_MODEL if LLM_SERVICE == "Ollama" else OPENAI_MODEL
 
+    def _ensure_ollama_running(self):
+        """Start ollama serve if it's not already reachable."""
+        try:
+            httpx.get(OLLAMA_BASE_URL.replace("/v1", ""), timeout=2)
+            return  # Already running
+        except Exception:
+            pass
+
+        logging.info("Ollama not reachable, starting ollama serve...")
+        local["ollama"].popen(["serve"])
+
+        # Wait up to 10s for it to become ready
+        for _ in range(20):
+            time.sleep(0.5)
+            try:
+                httpx.get(OLLAMA_BASE_URL.replace("/v1", ""), timeout=1)
+                logging.info("Ollama started successfully.")
+                return
+            except Exception:
+                pass
+
+        raise RuntimeError("Timed out waiting for ollama serve to start")
+
     def _get_llm_client(self) -> OpenAI:
         """Get the appropriate LLM client based on configuration."""
         if LLM_SERVICE == "Ollama":
+            self._ensure_ollama_running()
             logging.debug(f"Using Ollama at {OLLAMA_BASE_URL} with model {OLLAMA_MODEL}")
             return OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")  # Dummy key for Ollama
         else:
