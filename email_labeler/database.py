@@ -4,7 +4,7 @@ import json
 import logging
 import sqlite3
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .config import DATABASE_FILE
 
@@ -73,6 +73,10 @@ class EmailDatabase:
             )
         """
         )
+        try:
+            self.cursor.execute("ALTER TABLE emails ADD COLUMN headers TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         self.conn.commit()
         logging.info("Database initialized successfully")
 
@@ -153,17 +157,35 @@ class EmailDatabase:
         return None
 
     def save_email(
-        self, email_id: str, subject: str, sender: str, received_date: str, content: str
+        self,
+        email_id: str,
+        subject: str,
+        sender: str,
+        received_date: str,
+        content: str,
+        headers: Dict = {},  # noqa: B006 — never mutated, json.dumps only reads it
     ):
         """Save email to the database."""
         self.cursor.execute(
             """
-            INSERT OR REPLACE INTO emails (id, subject, sender, received_date, content)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO emails (id, subject, sender, received_date, content, headers)
+            VALUES (?, ?, ?, ?, ?, ?)
         """,
-            (email_id, subject, sender, received_date, content),
+            (email_id, subject, sender, received_date, content, json.dumps(headers)),
         )
         self.conn.commit()
+
+    def get_all_email_ids(self) -> List[str]:
+        """Return all email_ids that have been labeled."""
+        self.cursor.execute("SELECT email_id FROM email_labels")
+        return [row[0] for row in self.cursor.fetchall()]
+
+    def get_all_email_metadata(self) -> List[Tuple]:
+        """Return id, subject, sender, headers for all emails that have a sender."""
+        self.cursor.execute(
+            "SELECT id, subject, sender, headers FROM emails"
+        )
+        return self.cursor.fetchall()
 
     def close(self):
         """Close the database connection."""

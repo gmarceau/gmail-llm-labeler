@@ -100,6 +100,7 @@ class EmailProcessor:
                         email_data.get("from", ""),
                         email_data.get("date", datetime.now().isoformat()),
                         email_data.get("body", ""),
+                        email_data.get("headers", {}),
                     )
                 )
             except Exception as e:

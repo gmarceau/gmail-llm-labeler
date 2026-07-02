@@ -9,6 +9,8 @@ import os
 import os.path
 from typing import Dict, List, Optional, Union
 
+import pydash
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -235,6 +237,20 @@ def get_email_content(
         email_data["from"] = header_dict.get("from", "")
         email_data["to"] = header_dict.get("to", "")
         email_data["date"] = header_dict.get("date", "")
+
+        classification_header_names = [
+            "list-unsubscribe",
+            "list-unsubscribe-post",
+            "list-id",
+            "precedence",
+            "auto-submitted",
+            "x-mailer",
+            "feedback-id",
+            "reply-to",
+            "return-path",
+            "sender",
+        ]
+        email_data["headers"] = pydash.pick(header_dict, classification_header_names)
 
         # Extract body
         if format in ["full", "raw"]:

@@ -78,9 +78,10 @@ class ExtractStage(PipelineStage):
         )
 
         emails = []
-        for raw_email in raw_emails:
+        for email_id, subject, sender, date, content, headers in raw_emails:
             try:
-                email = self._normalize_email(raw_email)
+                email = self._normalize_email(email_id, subject, sender, date, content)
+                self.database.save_email(email.id, email.subject, email.sender, email.received_date, "", headers)
                 emails.append(email)
             except Exception as e:
                 logger.warning(f"Failed to normalize email: {e}")
@@ -113,14 +114,8 @@ class ExtractStage(PipelineStage):
 
         return emails
 
-    def _normalize_email(self, raw_email: tuple) -> EmailRecord:
-        """Convert raw email data to EmailRecord."""
-        if len(raw_email) != 5:
-            raise ValueError(f"Expected 5 elements in raw email tuple, got {len(raw_email)}")
-
-        email_id, subject, sender, date, content = raw_email
-
-        # Ensure date is a string
+    def _normalize_email(self, email_id: str, subject: str, sender: str, date, content: str) -> EmailRecord:
+        """Convert raw email fields to EmailRecord."""
         if isinstance(date, datetime):
             date = date.isoformat()
         elif date is None:

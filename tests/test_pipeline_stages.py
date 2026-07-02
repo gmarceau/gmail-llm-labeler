@@ -41,8 +41,8 @@ class TestExtractStage:
 
         # Mock email processor to return test emails
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1"),
-            ("msg2", "Subject 2", "sender2@example.com", "2024-01-01T10:00:00Z", "Content 2"),
+            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1", {}),
+            ("msg2", "Subject 2", "sender2@example.com", "2024-01-01T10:00:00Z", "Content 2", {}),
         ]
 
         emails = stage.execute(None, pipeline_context)
@@ -60,8 +60,8 @@ class TestExtractStage:
 
         # Mock email processor to return test emails
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1"),
-            ("msg2", "Subject 2", "sender2@example.com", "2024-01-01T10:00:00Z", "Content 2"),
+            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1", {}),
+            ("msg2", "Subject 2", "sender2@example.com", "2024-01-01T10:00:00Z", "Content 2", {}),
         ]
 
         emails = stage.execute(None, pipeline_context)
@@ -106,13 +106,7 @@ class TestExtractStage:
 
         # Create large number of email tuples
         test_emails = [
-            (
-                f"msg{i}",
-                f"Subject {i}",
-                f"sender{i}@example.com",
-                "2024-01-01T10:00:00Z",
-                f"Content {i}",
-            )
+            (f"msg{i}", f"Subject {i}", f"sender{i}@example.com", "2024-01-01T10:00:00Z", f"Content {i}", {})
             for i in range(25)
         ]
         mock_email_processor.fetch_emails_from_gmail.return_value = test_emails
@@ -135,6 +129,55 @@ class TestExtractStage:
         # Should return empty list if continue_on_error is True
         emails = stage.execute(None, pipeline_context)
         assert emails == []
+
+    def test_save_email_called_on_extract(
+        self, mock_email_processor, email_database, pipeline_config, pipeline_context
+    ):
+        """Extracted emails are persisted to DB without body content."""
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        mock_email_processor.fetch_emails_from_gmail.return_value = [
+            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Body", {}),
+        ]
+        email_database.save_email = MagicMock()
+
+        stage.execute(None, pipeline_context)
+
+        email_database.save_email.assert_called_once_with(
+            "msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "", {}
+        )
+
+    def test_save_email_includes_headers(
+        self, mock_email_processor, email_database, pipeline_config, pipeline_context
+    ):
+        """Headers from the 6th tuple element are forwarded to save_email."""
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        headers = {"list-unsubscribe": "<https://example.com/unsub>", "reply-to": "noreply@x.com"}
+        mock_email_processor.fetch_emails_from_gmail.return_value = [
+            ("msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z", "Body", headers),
+        ]
+        email_database.save_email = MagicMock()
+
+        stage.execute(None, pipeline_context)
+
+        email_database.save_email.assert_called_once_with(
+            "msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z", "", headers
+        )
+
+    def test_save_email_empty_headers(
+        self, mock_email_processor, email_database, pipeline_config, pipeline_context
+    ):
+        """Tuples with an empty headers dict save correctly."""
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        mock_email_processor.fetch_emails_from_gmail.return_value = [
+            ("msg1", "Subject", "a@b.com", "2024-01-01T10:00:00Z", "Body", {}),
+        ]
+        email_database.save_email = MagicMock()
+
+        stage.execute(None, pipeline_context)
+
+        email_database.save_email.assert_called_once_with(
+            "msg1", "Subject", "a@b.com", "2024-01-01T10:00:00Z", "", {}
+        )
 
 
 class TestTransformStage:

@@ -183,14 +183,13 @@ class TestEmailDatabase:
             email_database.get_email_labels(email_id)
 
     def test_save_email(self, email_database):
-        """Test saving email to database."""
+        """Test saving email to database without headers."""
         email_id = "test_email"
         subject = "Test Subject"
         sender = "test@example.com"
         received_date = "2024-01-01T12:00:00"
         content = "Test email content"
 
-        # Reset mock to ignore initialization calls
         email_database.cursor.execute.reset_mock()
         email_database.conn.commit.reset_mock()
 
@@ -198,12 +197,93 @@ class TestEmailDatabase:
 
         email_database.cursor.execute.assert_called_with(
             """
-            INSERT OR REPLACE INTO emails (id, subject, sender, received_date, content)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO emails (id, subject, sender, received_date, content, headers)
+            VALUES (?, ?, ?, ?, ?, ?)
         """,
-            (email_id, subject, sender, received_date, content),
+            (email_id, subject, sender, received_date, content, "{}"),
         )
         email_database.conn.commit.assert_called_once()
+
+    def test_save_email_with_headers(self, email_database):
+        """Test saving email with headers serializes to JSON."""
+        headers = {"List-Unsubscribe": "<https://example.com/unsub>", "Reply-To": None}
+
+        email_database.cursor.execute.reset_mock()
+        email_database.conn.commit.reset_mock()
+
+        email_database.save_email("e1", "subj", "a@b.com", "2024-01-01", "", headers=headers)
+
+        call_args = email_database.cursor.execute.call_args[0]
+        stored_headers = call_args[1][5]
+        assert json.loads(stored_headers) == headers
+
+    def test_get_all_email_ids(self, email_database):
+        """Test retrieving all email_ids from email_labels."""
+        email_database.cursor.fetchall.return_value = [("id1",), ("id2",), ("id3",)]
+
+        result = email_database.get_all_email_ids()
+
+        assert result == ["id1", "id2", "id3"]
+        email_database.cursor.execute.assert_called_with("SELECT email_id FROM email_labels")
+
+    def test_get_all_email_metadata(self, email_database):
+        """Test retrieving metadata for all emails."""
+        rows = [
+            ("id1", "Hello", "alice@example.com", '{"List-Unsubscribe": "<url>"}'),
+            ("id2", "World", "bob@other.com", "{}"),
+        ]
+        email_database.cursor.fetchall.return_value = rows
+
+        result = email_database.get_all_email_metadata()
+
+        assert result == rows
+        email_database.cursor.execute.assert_called_with(
+            "SELECT id, subject, sender, headers FROM emails"
+        )
+
+    def test_headers_column_created_on_new_db(self):
+        """Integration: headers column exists after initialize_db on fresh DB."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+            db.cursor.execute("PRAGMA table_info(emails)")
+            columns = {row[1] for row in db.cursor.fetchall()}
+            assert "headers" in columns
+            db.close()
+
+    def test_headers_column_idempotent_on_existing_db(self):
+        """Integration: calling initialize_db twice does not fail (column already exists)."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db1 = EmailDatabase(database_file=tmp.name)
+            db1.close()
+            # Second init should not raise
+            db2 = EmailDatabase(database_file=tmp.name)
+            db2.close()
+
+    def test_save_and_retrieve_headers(self):
+        """Integration: headers round-trip through save_email and get_all_email_metadata."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+            headers = {"List-Unsubscribe": "<https://unsub.example.com>", "Reply-To": "noreply@example.com"}
+            db.save_email("e1", "Weekly", "news@substack.com", "2024-01-01", "", headers=headers)
+
+            rows = db.get_all_email_metadata()
+            assert len(rows) == 1
+            stored = json.loads(rows[0][3])
+            assert stored == headers
+            db.close()
+
+    def test_get_all_email_ids_integration(self):
+        """Integration: get_all_email_ids returns correct ids."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+            db.save_email("e1", "S1", "a@b.com", "2024-01-01", "")
+            db.update_email_labels("e1", "newsletter", [])
+            db.save_email("e2", "S2", "c@d.com", "2024-01-01", "")
+            db.update_email_labels("e2", "main", [])
+
+            ids = db.get_all_email_ids()
+            assert set(ids) == {"e1", "e2"}
+            db.close()
 
     def test_close_connection_owned(self):
         """Test closing connection when database owns it."""
