@@ -2,12 +2,31 @@
 """Command-line interface for the ETL pipeline."""
 
 import argparse
+import json
 import logging
 import sys
+from email.headerregistry import Address
+from email.utils import parseaddr
 from pathlib import Path
 
+import pydash
+import tldextract
+
+from ..config import PathConfig
+from ..database import EmailDatabase
+from ..email_processor import EmailProcessor
+from ..gmail_utils import backfill_email_metadata
 from .config import PipelineConfig
 from .orchestrator import EmailPipeline
+
+
+def _extract_domain(sender: str) -> str:
+    """Extract the registered domain from a From/Sender header value using tldextract."""
+    _, address = parseaddr(sender)
+    if not address or "@" not in address:
+        return ""
+    hostname = Address(addr_spec=address).domain.lower()
+    return tldextract.extract(hostname).top_domain_under_public_suffix or hostname
 
 
 class _ExecuteOnlyInfo(logging.Filter):
@@ -122,6 +141,16 @@ Examples:
     metrics_parser = subparsers.add_parser("show-metrics", help="Show metrics from the last run")
     metrics_parser.add_argument(
         "--file", type=str, default="pipeline_metrics.json", help="Path to metrics file"
+    )
+
+    # Dump domains command
+    dump_parser = subparsers.add_parser(
+        "dump-domains",
+        help="Fetch email metadata from Gmail and output per-domain analysis as JSON",
+    )
+    dump_parser.add_argument(
+        "--config", "-c", type=str, default="config_production_7b.yaml",
+        help="Path to configuration YAML file (used for DB path and existing domain_rules)",
     )
 
     return parser
@@ -321,6 +350,53 @@ def show_metrics(args):
         return 1
 
 
+def dump_domains(args):
+    """Fetch email metadata for all labeled emails and output per-domain analysis as JSON."""
+    config = PipelineConfig.from_yaml(args.config) if args.config else PipelineConfig.from_env()
+    existing_domains = set(getattr(config.transform, "domain_rules", {}).keys())
+
+    path_config = PathConfig(config_file=args.config)
+    db = EmailDatabase(database_file=str(path_config.database_file))
+
+    processor = EmailProcessor(lazy_init=True)
+    missing_ids = db.get_email_ids_missing_metadata()
+    backfill_email_metadata(processor, missing_ids, db)
+
+    rows = db.get_all_email_metadata()
+    flat = [
+        {
+            "domain": _extract_domain(sender),
+            "subject": subject or "",
+            "headers": json.loads(headers_json) if headers_json else {},
+            "has_unsubscribe": bool(has_unsubscribe),
+        }
+        for _, subject, sender, headers_json, has_unsubscribe in rows
+        if sender
+    ]
+    filtered = [r for r in flat if r["domain"] and r["domain"] not in existing_domains]
+
+    grouped = pydash.group_by(filtered, "domain")
+    result = [
+        {
+            "domain": domain,
+            "count": len(items),
+            "samples": [
+                {
+                    "subject": i["subject"],
+                    "headers": i["headers"],
+                    "has_unsubscribe": i["has_unsubscribe"],
+                }
+                for i in items
+            ],
+        }
+        for domain, items in sorted(grouped.items(), key=lambda x: -len(x[1]))
+    ]
+
+    print(json.dumps(result, indent=2))
+    db.close()
+    return 0
+
+
 def main():
     """Main entry point."""
     parser = create_parser()
@@ -341,6 +417,8 @@ def main():
         return validate_config(args)
     elif args.command == "show-metrics":
         return show_metrics(args)
+    elif args.command == "dump-domains":
+        return dump_domains(args)
     else:
         parser.print_help()
         return 1

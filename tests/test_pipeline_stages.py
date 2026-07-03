@@ -143,7 +143,7 @@ class TestExtractStage:
         stage.execute(None, pipeline_context)
 
         email_database.save_email.assert_called_once_with(
-            "msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "", {}
+            "msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "", {}, False
         )
 
     def test_save_email_includes_headers(
@@ -160,7 +160,7 @@ class TestExtractStage:
         stage.execute(None, pipeline_context)
 
         email_database.save_email.assert_called_once_with(
-            "msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z", "", headers
+            "msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z", "", headers, False
         )
 
     def test_save_email_empty_headers(
@@ -176,7 +176,24 @@ class TestExtractStage:
         stage.execute(None, pipeline_context)
 
         email_database.save_email.assert_called_once_with(
-            "msg1", "Subject", "a@b.com", "2024-01-01T10:00:00Z", "", {}
+            "msg1", "Subject", "a@b.com", "2024-01-01T10:00:00Z", "", {}, False
+        )
+
+    def test_save_email_detects_unsubscribe_in_body(
+        self, mock_email_processor, email_database, pipeline_config, pipeline_context
+    ):
+        """has_unsubscribe is True when body contains the word 'unsubscribe'."""
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        mock_email_processor.fetch_emails_from_gmail.return_value = [
+            ("msg1", "News", "news@sub.com", "2024-01-01T10:00:00Z",
+             "Click here to Unsubscribe from this list.", {}),
+        ]
+        email_database.save_email = MagicMock()
+
+        stage.execute(None, pipeline_context)
+
+        email_database.save_email.assert_called_once_with(
+            "msg1", "News", "news@sub.com", "2024-01-01T10:00:00Z", "", {}, True
         )
 
 

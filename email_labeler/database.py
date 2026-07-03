@@ -77,6 +77,10 @@ class EmailDatabase:
             self.cursor.execute("ALTER TABLE emails ADD COLUMN headers TEXT")
         except sqlite3.OperationalError:
             pass  # Column already exists
+        try:
+            self.cursor.execute("ALTER TABLE emails ADD COLUMN has_unsubscribe INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         self.conn.commit()
         logging.info("Database initialized successfully")
 
@@ -164,14 +168,17 @@ class EmailDatabase:
         received_date: str,
         content: str,
         headers: Dict = {},  # noqa: B006 — never mutated, json.dumps only reads it
+        has_unsubscribe: bool = False,
     ):
         """Save email to the database."""
         self.cursor.execute(
             """
-            INSERT OR REPLACE INTO emails (id, subject, sender, received_date, content, headers)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO emails
+                (id, subject, sender, received_date, content, headers, has_unsubscribe)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-            (email_id, subject, sender, received_date, content, json.dumps(headers)),
+            (email_id, subject, sender, received_date, content, json.dumps(headers),
+             int(has_unsubscribe)),
         )
         self.conn.commit()
 
@@ -181,11 +188,21 @@ class EmailDatabase:
         return [row[0] for row in self.cursor.fetchall()]
 
     def get_all_email_metadata(self) -> List[Tuple]:
-        """Return id, subject, sender, headers for all emails that have a sender."""
+        """Return id, subject, sender, headers, has_unsubscribe for all emails."""
         self.cursor.execute(
-            "SELECT id, subject, sender, headers FROM emails"
+            "SELECT id, subject, sender, headers, has_unsubscribe FROM emails"
         )
         return self.cursor.fetchall()
+
+    def get_email_ids_missing_metadata(self) -> List[str]:
+        """Return email_ids from email_labels with no cached entry in emails (or empty sender)."""
+        self.cursor.execute("""
+            SELECT el.email_id
+            FROM email_labels el
+            LEFT JOIN emails e ON el.email_id = e.id
+            WHERE e.id IS NULL OR e.sender IS NULL OR e.sender = ''
+        """)
+        return [row[0] for row in self.cursor.fetchall()]
 
     def close(self):
         """Close the database connection."""

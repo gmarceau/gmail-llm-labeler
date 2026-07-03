@@ -197,10 +197,11 @@ class TestEmailDatabase:
 
         email_database.cursor.execute.assert_called_with(
             """
-            INSERT OR REPLACE INTO emails (id, subject, sender, received_date, content, headers)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO emails
+                (id, subject, sender, received_date, content, headers, has_unsubscribe)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-            (email_id, subject, sender, received_date, content, "{}"),
+            (email_id, subject, sender, received_date, content, "{}", 0),
         )
         email_database.conn.commit.assert_called_once()
 
@@ -214,8 +215,15 @@ class TestEmailDatabase:
         email_database.save_email("e1", "subj", "a@b.com", "2024-01-01", "", headers=headers)
 
         call_args = email_database.cursor.execute.call_args[0]
-        stored_headers = call_args[1][5]
-        assert json.loads(stored_headers) == headers
+        assert json.loads(call_args[1][5]) == headers
+        assert call_args[1][6] == 0  # has_unsubscribe defaults to False
+
+    def test_save_email_has_unsubscribe(self, email_database):
+        """Test that has_unsubscribe is stored as integer 1/0."""
+        email_database.cursor.execute.reset_mock()
+        email_database.save_email("e1", "", "a@b.com", "2024-01-01", "", has_unsubscribe=True)
+        call_args = email_database.cursor.execute.call_args[0]
+        assert call_args[1][6] == 1
 
     def test_get_all_email_ids(self, email_database):
         """Test retrieving all email_ids from email_labels."""
@@ -226,11 +234,47 @@ class TestEmailDatabase:
         assert result == ["id1", "id2", "id3"]
         email_database.cursor.execute.assert_called_with("SELECT email_id FROM email_labels")
 
+    def test_get_email_ids_missing_metadata_returns_unlabeled(self):
+        """Integration: returns IDs in email_labels with no entry in emails."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+            # labeled but not cached
+            db.update_email_labels("e1", "newsletter", [])
+            # labeled AND cached with a sender
+            db.save_email("e2", "Sub", "a@b.com", "2024-01-01", "")
+            db.update_email_labels("e2", "main", [])
+
+            missing = db.get_email_ids_missing_metadata()
+            assert "e1" in missing
+            assert "e2" not in missing
+            db.close()
+
+    def test_get_email_ids_missing_metadata_empty_sender_counts_as_missing(self):
+        """Integration: a row in emails with empty sender is treated as missing."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+            db.save_email("e1", "Sub", "", "2024-01-01", "")  # empty sender
+            db.update_email_labels("e1", "main", [])
+
+            missing = db.get_email_ids_missing_metadata()
+            assert "e1" in missing
+            db.close()
+
+    def test_get_email_ids_missing_metadata_empty_when_all_cached(self):
+        """Integration: returns empty list when every labeled email has cached metadata."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+            db.save_email("e1", "Sub", "a@b.com", "2024-01-01", "")
+            db.update_email_labels("e1", "newsletter", [])
+
+            assert db.get_email_ids_missing_metadata() == []
+            db.close()
+
     def test_get_all_email_metadata(self, email_database):
         """Test retrieving metadata for all emails."""
         rows = [
-            ("id1", "Hello", "alice@example.com", '{"List-Unsubscribe": "<url>"}'),
-            ("id2", "World", "bob@other.com", "{}"),
+            ("id1", "Hello", "alice@example.com", '{"List-Unsubscribe": "<url>"}', 1),
+            ("id2", "World", "bob@other.com", "{}", 0),
         ]
         email_database.cursor.fetchall.return_value = rows
 
@@ -238,7 +282,7 @@ class TestEmailDatabase:
 
         assert result == rows
         email_database.cursor.execute.assert_called_with(
-            "SELECT id, subject, sender, headers FROM emails"
+            "SELECT id, subject, sender, headers, has_unsubscribe FROM emails"
         )
 
     def test_headers_column_created_on_new_db(self):
@@ -260,16 +304,17 @@ class TestEmailDatabase:
             db2.close()
 
     def test_save_and_retrieve_headers(self):
-        """Integration: headers round-trip through save_email and get_all_email_metadata."""
+        """Integration: headers and has_unsubscribe round-trip through save_email."""
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
             db = EmailDatabase(database_file=tmp.name)
             headers = {"List-Unsubscribe": "<https://unsub.example.com>", "Reply-To": "noreply@example.com"}
-            db.save_email("e1", "Weekly", "news@substack.com", "2024-01-01", "", headers=headers)
+            db.save_email("e1", "Weekly", "news@substack.com", "2024-01-01", "",
+                          headers=headers, has_unsubscribe=True)
 
             rows = db.get_all_email_metadata()
             assert len(rows) == 1
-            stored = json.loads(rows[0][3])
-            assert stored == headers
+            assert json.loads(rows[0][3]) == headers
+            assert rows[0][4] == 1  # has_unsubscribe stored as integer
             db.close()
 
     def test_get_all_email_ids_integration(self):

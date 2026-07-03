@@ -81,7 +81,8 @@ class ExtractStage(PipelineStage):
         for email_id, subject, sender, date, content, headers in raw_emails:
             try:
                 email = self._normalize_email(email_id, subject, sender, date, content)
-                self.database.save_email(email.id, email.subject, email.sender, email.received_date, "", headers)
+                has_unsubscribe = "unsubscribe" in (content or "").lower()
+                self.database.save_email(email.id, email.subject, email.sender, email.received_date, "", headers, has_unsubscribe)
                 emails.append(email)
             except Exception as e:
                 logger.warning(f"Failed to normalize email: {e}")

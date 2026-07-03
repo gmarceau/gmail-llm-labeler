@@ -7,7 +7,7 @@ import base64
 import logging
 import os
 import os.path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import pydash
 
@@ -28,6 +28,28 @@ SCOPES = [
 # Default file paths
 TOKEN_FILE = "token.json"
 CREDENTIALS_FILE = "credentials.json"
+
+# Header names (lowercase) extracted from Gmail payloads for sender classification.
+CLASSIFICATION_HEADER_NAMES = [
+    "list-unsubscribe",
+    "list-unsubscribe-post",
+    "list-id",
+    "precedence",
+    "auto-submitted",
+    "x-mailer",
+    "feedback-id",
+    "reply-to",
+    "return-path",
+    "sender",
+]
+
+# Mixed-case header names for the Gmail metadata-format API (metadataHeaders parameter).
+CLASSIFICATION_METADATA_HEADERS = [
+    "From", "Subject", "Date",
+    "List-Unsubscribe", "List-Unsubscribe-Post", "List-Id",
+    "Precedence", "Auto-Submitted", "X-Mailer", "Feedback-Id",
+    "Reply-To", "Return-Path", "Sender",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -238,23 +260,18 @@ def get_email_content(
         email_data["to"] = header_dict.get("to", "")
         email_data["date"] = header_dict.get("date", "")
 
-        classification_header_names = [
-            "list-unsubscribe",
-            "list-unsubscribe-post",
-            "list-id",
-            "precedence",
-            "auto-submitted",
-            "x-mailer",
-            "feedback-id",
-            "reply-to",
-            "return-path",
-            "sender",
-        ]
-        email_data["headers"] = pydash.pick(header_dict, classification_header_names)
+        email_data["headers"] = pydash.pick(header_dict, CLASSIFICATION_HEADER_NAMES)
 
         # Extract body
         if format in ["full", "raw"]:
             email_data["body"] = parse_email_body(message.get("payload", {}))
+
+        snippet = message.get("snippet", "")
+        body = email_data.get("body", snippet)
+        email_data["has_unsubscribe"] = (
+            "unsubscribe" in (body or "").lower()
+            or "list-unsubscribe" in email_data["headers"]
+        )
 
         return email_data
 
@@ -264,6 +281,35 @@ def get_email_content(
     except Exception as e:
         logger.error(f"Unexpected error when processing email {email_id}: {e}")
         raise
+
+
+def backfill_email_metadata(processor: Any, email_ids: List[str], db: Any) -> None:
+    """Fetch Gmail metadata for each ID and persist it to the emails table.
+
+    `processor` must expose `_ensure_gmail_client()` and a `.gmail` Resource attribute
+    (i.e. an EmailProcessor with lazy_init=True). Auth is deferred until the first ID
+    so an empty list is a guaranteed no-op.
+    """
+    for email_id in email_ids:
+        processor._ensure_gmail_client()
+        try:
+            data = get_email_content(
+                processor.gmail,
+                email_id,
+                format="metadata",
+                metadata_headers=CLASSIFICATION_METADATA_HEADERS,
+            )
+            db.save_email(
+                email_id,
+                data.get("subject", ""),
+                data.get("from", ""),
+                data.get("date", ""),
+                "",
+                data.get("headers", {}),
+                data.get("has_unsubscribe", False),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch metadata for {email_id}: {e}")
 
 
 def get_or_create_label(
