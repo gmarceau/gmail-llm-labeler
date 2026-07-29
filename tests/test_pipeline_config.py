@@ -22,6 +22,17 @@ class TestTransformConfigRoundTrip:
             "recruiter@gmail.com": "marketing",
         }
 
+    def test_personal_domains_round_trips(self, tmp_path):
+        config = PipelineConfig(
+            transform=TransformConfig(personal_domains=["gmail.com", "hotmail.com"])
+        )
+        path = str(tmp_path / "config.yaml")
+        config.to_yaml(path)
+
+        loaded = PipelineConfig.from_yaml(path)
+
+        assert loaded.transform.personal_domains == ["gmail.com", "hotmail.com"]
+
     def test_llm_body_mode_round_trips(self, tmp_path):
         config = PipelineConfig(transform=TransformConfig(llm_body_mode="head"))
         path = str(tmp_path / "config.yaml")
@@ -49,5 +60,6 @@ class TestTransformConfigRoundTrip:
         loaded = PipelineConfig.from_yaml(path)
 
         assert loaded.transform.sender_rules == {}
+        assert loaded.transform.personal_domains == []
         assert loaded.transform.llm_body_mode == "none"
         assert loaded.transform.llm_body_head_lines == 20

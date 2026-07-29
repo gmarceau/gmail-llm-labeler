@@ -46,6 +46,9 @@ class TransformConfig:
     system_prompt: Optional[str] = None  # Custom system prompt (supports templating)
     user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
     sender_rules: Dict[str, str] = field(default_factory=dict)  # full address or registered domain -> category
+    # Freemail/personal domains: in the biweekly review these are broken out per individual
+    # sender (you'd never rule the whole domain), rather than collapsed into one domain row.
+    personal_domains: List[str] = field(default_factory=list)
     llm_body_mode: str = "none"  # Options: "none", "head", "full"
     llm_body_head_lines: int = 20  # used when llm_body_mode == "head"
 
@@ -190,6 +193,7 @@ class PipelineConfig:
                     "system_prompt": self.transform.system_prompt,
                     "user_prompt": self.transform.user_prompt,
                     "sender_rules": self.transform.sender_rules,
+                    "personal_domains": self.transform.personal_domains,
                     "llm_body_mode": self.transform.llm_body_mode,
                     "llm_body_head_lines": self.transform.llm_body_head_lines,
                 },

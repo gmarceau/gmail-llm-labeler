@@ -50,6 +50,20 @@ pipeline:
       buttondown.email: newsletter
       beehiiv.com: newsletter
 
+    # Freemail domains: in `dump-domains` these are broken out per individual sender
+    # (each address is a different person) rather than lumped under the domain, so you can
+    # pick out e.g. a recruiter and add their exact address to sender_rules above.
+    personal_domains:
+      - gmail.com
+      - hotmail.com
+      - yahoo.com
+      - outlook.com
+      - icloud.com
+      - aol.com
+      - me.com
+      - proton.me
+      - protonmail.com
+
     # Variant 1 of the body-inclusion A/B test: no email body, headers only.
     llm_body_mode: none
 

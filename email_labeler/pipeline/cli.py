@@ -350,6 +350,9 @@ def dump_domains(args):
     rule_keys = set(getattr(config.transform, "sender_rules", {}).keys())
     known_addresses = {k for k in rule_keys if "@" in k}
     known_domains = rule_keys - known_addresses
+    # On personal/freemail domains every sender is a different person, so grouping by domain
+    # is useless; break those out per individual address (the pasteable sender_rule key).
+    personal_domains = set(getattr(config.transform, "personal_domains", []))
 
     path_config = PathConfig(config_file=args.config)
     db = EmailDatabase(database_file=str(path_config.database_file))
@@ -373,10 +376,17 @@ def dump_domains(args):
         and r["address"] not in known_addresses
     ]
 
-    grouped = pydash.group_by(filtered, "domain")
+    # The rule key is exactly what you'd paste into sender_rules: an address for personal
+    # domains (when parseable), otherwise the domain.
+    for r in filtered:
+        r["rule"] = r["address"] if (r["domain"] in personal_domains and r["address"]) else r["domain"]
+
+    grouped = pydash.group_by(filtered, "rule")
+    # Full per-email list per group (no cap): recruiters and the like are told apart by their
+    # distinct subjects, so the whole list is the signal.
     result = [
         {
-            "domain": domain,
+            "rule": rule,
             "count": len(items),
             "samples": [
                 {
@@ -387,7 +397,7 @@ def dump_domains(args):
                 for i in items
             ],
         }
-        for domain, items in sorted(grouped.items(), key=lambda x: -len(x[1]))
+        for rule, items in sorted(grouped.items(), key=lambda x: -len(x[1]))
     ]
 
     print(yaml.dump(result, default_flow_style=False, sort_keys=False, allow_unicode=True))
