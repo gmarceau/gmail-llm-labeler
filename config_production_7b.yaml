@@ -39,8 +39,23 @@ pipeline:
       - "marketing"
       - "main"
 
+    # Known senders skip the LLM entirely. Reviewed biweekly via `dump-domains`;
+    # a domain here takes precedence over everything below.
+    domain_rules:
+      substack.com: newsletter
+      patreon.com: newsletter
+      buttondown.email: newsletter
+      beehiiv.com: newsletter
+
+    # Variant 1 of the body-inclusion A/B test: no email body, headers only.
+    llm_body_mode: none
+
     user_prompt: |
-      Categorize this email into exactly ONE category. Choose the best match:
+      Categorize this email into exactly ONE category. Choose the best match.
+      The email content below is the sender, subject, and mail headers
+      (List-Unsubscribe, List-Id, Precedence, etc.) that indicate whether this
+      is a bulk/automated email; it may or may not include body text, depending
+      on the current experiment variant.
 
       transaction: Automated transactional or informational emails about my recent actions. Order confirmations, shipping updates, receipts, login alerts, password resets, account statements. NOT event invitations I haven't registered for yet. Only AUTOMATED emails!
 

@@ -144,6 +144,11 @@ Examples:
         "--config", "-c", type=str, default="config_production_7b.yaml",
         help="Path to configuration YAML file (used for DB path and existing domain_rules)",
     )
+    dump_parser.add_argument(
+        "--backfill-missing", action="store_true",
+        help="Fetch metadata from Gmail for labeled emails missing cached headers "
+             "(requires Gmail auth). Off by default: only DB-cached metadata is used.",
+    )
 
     return parser
 
@@ -350,9 +355,10 @@ def dump_domains(args):
     path_config = PathConfig(config_file=args.config)
     db = EmailDatabase(database_file=str(path_config.database_file))
 
-    processor = EmailProcessor(lazy_init=True)
-    missing_ids = db.get_email_ids_missing_metadata()
-    backfill_email_metadata(processor, missing_ids, db)
+    if getattr(args, "backfill_missing", False):
+        processor = EmailProcessor(lazy_init=True)
+        missing_ids = db.get_email_ids_missing_metadata()
+        backfill_email_metadata(processor, missing_ids, db)
 
     rows = db.get_all_email_metadata()
     flat = [

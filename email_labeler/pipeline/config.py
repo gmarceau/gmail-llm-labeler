@@ -189,6 +189,9 @@ class PipelineConfig:
                     "categories": self.transform.categories,
                     "system_prompt": self.transform.system_prompt,
                     "user_prompt": self.transform.user_prompt,
+                    "domain_rules": self.transform.domain_rules,
+                    "llm_body_mode": self.transform.llm_body_mode,
+                    "llm_body_head_lines": self.transform.llm_body_head_lines,
                 },
                 "load": {
                     "apply_labels": self.load.apply_labels,

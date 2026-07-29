@@ -1,7 +1,23 @@
 version: "3"
 
+vars:
+  CONFIG: config_production_7b.yaml
+
 tasks:
   test:
     desc: Run the test suite (pass CLI_ARGS to target specific tests, e.g. task test CLI_ARGS=tests/test_foo.py)
     cmds:
       - venv/bin/python -m pytest {{.CLI_ARGS}}
+
+  validate-config:
+    desc: Validate a pipeline config file (pass CONFIG to target a different file, e.g. task validate-config CONFIG=my_config.yaml)
+    cmds:
+      - venv/bin/python -m email_labeler.pipeline.cli validate-config {{.CONFIG}}
+
+  biweekly-review:
+    desc: >
+      Surface sender domains not yet in domain_rules, grouped by count with header
+      samples, so you can decide their category and add them to CONFIG's domain_rules.
+      Run every two weeks. Pass CONFIG to target a different file.
+    cmds:
+      - venv/bin/python -m email_labeler.pipeline.cli dump-domains --config {{.CONFIG}}

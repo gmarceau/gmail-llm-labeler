@@ -49,8 +49,8 @@ class TestDumpDomains:
             db.update_email_labels(email_id, "unknown", [])
         return db
 
-    def _args(self, config_path=None):
-        return type("Args", (), {"config": config_path})()
+    def _args(self, config_path=None, backfill_missing=False):
+        return type("Args", (), {"config": config_path, "backfill_missing": backfill_missing})()
 
     def test_groups_by_domain(self, tmp_path, capsys):
         db = self._make_db_with_emails(tmp_path, [
@@ -168,8 +168,26 @@ class TestDumpDomains:
         output = json.loads(capsys.readouterr().out)
         assert output[0]["samples"][0]["has_unsubscribe"] is True
 
+    def test_default_does_not_touch_gmail(self, tmp_path, capsys):
+        """Without --backfill-missing, dump_domains never touches Gmail, even with gaps in the DB."""
+        db = EmailDatabase(database_file=str(tmp_path / "test.db"))
+        db.update_email_labels("missing-id", "unknown", [])
+
+        with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
+             patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
+             patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db), \
+             patch("email_labeler.pipeline.cli.EmailProcessor") as mock_processor, \
+             patch("email_labeler.pipeline.cli.backfill_email_metadata") as mock_backfill:
+            mock_cfg.return_value.transform.domain_rules = {}
+            mock_pc.return_value.database_file = tmp_path / "test.db"
+
+            dump_domains(self._args("fake.yaml"))
+
+        mock_processor.assert_not_called()
+        mock_backfill.assert_not_called()
+
     def test_gmail_fetched_for_missing_emails(self, tmp_path, capsys):
-        """Emails in email_labels but not in emails table trigger a Gmail metadata fetch."""
+        """With --backfill-missing, emails in email_labels but not in emails table trigger a fetch."""
         db = EmailDatabase(database_file=str(tmp_path / "test.db"))
         db.update_email_labels("missing-id", "unknown", [])
 
@@ -186,7 +204,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.domain_rules = {}
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            dump_domains(self._args("fake.yaml", backfill_missing=True))
 
         mock_backfill.assert_called_once()
         _, email_ids_arg, _ = mock_backfill.call_args[0]
@@ -195,7 +213,7 @@ class TestDumpDomains:
         assert output[0]["domain"] == "remote.com"
 
     def test_already_cached_emails_not_refetched(self, tmp_path, capsys):
-        """Emails already in the emails table pass an empty list to backfill."""
+        """With --backfill-missing, emails already in the emails table pass an empty list to backfill."""
         db = self._make_db_with_emails(tmp_path, [
             ("e1", "Sub", "a@cached.com", {}),
         ])
@@ -208,7 +226,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.domain_rules = {}
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            dump_domains(self._args("fake.yaml", backfill_missing=True))
 
         _, email_ids_arg, _ = mock_backfill.call_args[0]
         assert email_ids_arg == []
