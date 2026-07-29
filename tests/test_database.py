@@ -54,7 +54,10 @@ class TestEmailDatabase:
     def test_get_unprocessed_emails(self, email_database):
         """Test getting unprocessed emails."""
         expected_emails = [
-            ("email1", "Test Subject", "test@example.com", "2024-01-01T12:00:00", "Test content")
+            (
+                "email1", "Test Subject", "test@example.com", "2024-01-01T12:00:00",
+                "Test content", "{}", 0,
+            )
         ]
         email_database.cursor.fetchall.return_value = expected_emails
 
@@ -63,7 +66,7 @@ class TestEmailDatabase:
         assert result == expected_emails
         email_database.cursor.execute.assert_called_with(
             """
-            SELECT e.id, e.subject, e.sender, e.received_date, e.content
+            SELECT e.id, e.subject, e.sender, e.received_date, e.content, e.headers, e.has_unsubscribe
             FROM emails e
             LEFT JOIN processed_emails p ON e.id = p.email_id
             WHERE p.email_id IS NULL
@@ -81,7 +84,7 @@ class TestEmailDatabase:
 
         email_database.cursor.execute.assert_called_with(
             """
-            SELECT e.id, e.subject, e.sender, e.received_date, e.content
+            SELECT e.id, e.subject, e.sender, e.received_date, e.content, e.headers, e.has_unsubscribe
             FROM emails e
             LEFT JOIN processed_emails p ON e.id = p.email_id
             WHERE p.email_id IS NULL
@@ -90,6 +93,23 @@ class TestEmailDatabase:
         """,
             (100,),
         )
+
+    def test_get_unprocessed_emails_returns_headers_and_unsubscribe(self):
+        """Integration: headers and has_unsubscribe survive the round trip via get_unprocessed_emails."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+            headers = {"list-unsubscribe": "<https://unsub.example.com>"}
+            db.save_email(
+                "e1", "Weekly", "news@substack.com", "2024-01-01", "",
+                headers=headers, has_unsubscribe=True,
+            )
+
+            rows = db.get_unprocessed_emails()
+
+            assert len(rows) == 1
+            assert json.loads(rows[0][5]) == headers
+            assert rows[0][6] == 1
+            db.close()
 
     def test_update_email_labels(self, email_database, mock_datetime):
         """Test updating email labels."""

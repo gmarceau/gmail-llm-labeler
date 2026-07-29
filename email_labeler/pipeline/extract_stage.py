@@ -1,8 +1,9 @@
 """Extract stage implementation for the ETL pipeline."""
 
+import json
 import logging
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..database import EmailDatabase
 from ..email_processor import EmailProcessor
@@ -80,8 +81,11 @@ class ExtractStage(PipelineStage):
         emails = []
         for email_id, subject, sender, date, content, headers in raw_emails:
             try:
-                email = self._normalize_email(email_id, subject, sender, date, content)
                 has_unsubscribe = "unsubscribe" in (content or "").lower()
+                email = self._normalize_email(
+                    email_id, subject, sender, date, content,
+                    headers=headers, has_unsubscribe=has_unsubscribe,
+                )
                 self.database.save_email(email.id, email.subject, email.sender, email.received_date, "", headers, has_unsubscribe)
                 emails.append(email)
             except Exception as e:
@@ -105,7 +109,12 @@ class ExtractStage(PipelineStage):
         emails = []
         for raw_email in raw_emails:
             try:
-                email = self._normalize_email(raw_email)
+                email_id, subject, sender, date, content, headers_json, has_unsubscribe = raw_email
+                headers = json.loads(headers_json) if headers_json else {}
+                email = self._normalize_email(
+                    email_id, subject, sender, date, content,
+                    headers=headers, has_unsubscribe=bool(has_unsubscribe),
+                )
                 emails.append(email)
             except Exception as e:
                 logger.warning(f"Failed to normalize email: {e}")
@@ -115,7 +124,16 @@ class ExtractStage(PipelineStage):
 
         return emails
 
-    def _normalize_email(self, email_id: str, subject: str, sender: str, date, content: str) -> EmailRecord:
+    def _normalize_email(
+        self,
+        email_id: str,
+        subject: str,
+        sender: str,
+        date,
+        content: str,
+        headers: Optional[Dict[str, str]] = None,
+        has_unsubscribe: bool = False,
+    ) -> EmailRecord:
         """Convert raw email fields to EmailRecord."""
         if isinstance(date, datetime):
             date = date.isoformat()
@@ -130,6 +148,8 @@ class ExtractStage(PipelineStage):
             sender=sender or "",
             content=content or "",
             received_date=date,
+            headers=headers or {},
+            has_unsubscribe=has_unsubscribe,
         )
 
     def validate_input(self, input_data: Any) -> bool:

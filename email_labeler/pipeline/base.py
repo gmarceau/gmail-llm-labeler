@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EmailRecord:
     """Raw email data from extraction."""
 
@@ -16,9 +16,11 @@ class EmailRecord:
     sender: str
     content: str
     received_date: str
+    headers: Dict[str, str] = field(default_factory=dict)
+    has_unsubscribe: bool = False
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EnrichedEmailRecord(EmailRecord):
     """Email with categorization metadata."""
 

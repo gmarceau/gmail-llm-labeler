@@ -179,6 +179,39 @@ class TestExtractStage:
             "msg1", "Subject", "a@b.com", "2024-01-01T10:00:00Z", "", {}, False
         )
 
+    def test_gmail_extract_carries_headers_onto_email_record(
+        self, mock_email_processor, email_database, pipeline_config, pipeline_context
+    ):
+        """Headers and has_unsubscribe from the gmail source land on the EmailRecord itself."""
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        headers = {"list-unsubscribe": "<https://example.com/unsub>"}
+        mock_email_processor.fetch_emails_from_gmail.return_value = [
+            ("msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z",
+             "Click here to Unsubscribe.", headers),
+        ]
+
+        emails = stage.execute(None, pipeline_context)
+
+        assert emails[0].headers == headers
+        assert emails[0].has_unsubscribe is True
+
+    def test_database_extract_carries_headers_onto_email_record(
+        self, mock_email_processor, email_database, pipeline_config, pipeline_context
+    ):
+        """Headers and has_unsubscribe from the database source land on the EmailRecord itself."""
+        pipeline_config.extract.source = "database"
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        headers_json = '{"list-unsubscribe": "<https://example.com/unsub>"}'
+        email_database.cursor.fetchall.return_value = [
+            ("msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z", "", headers_json, 1),
+        ]
+
+        emails = stage.execute(None, pipeline_context)
+
+        assert len(emails) == 1
+        assert emails[0].headers == {"list-unsubscribe": "<https://example.com/unsub>"}
+        assert emails[0].has_unsubscribe is True
+
     def test_save_email_detects_unsubscribe_in_body(
         self, mock_email_processor, email_database, pipeline_config, pipeline_context
     ):

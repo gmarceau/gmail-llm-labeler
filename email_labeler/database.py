@@ -88,7 +88,7 @@ class EmailDatabase:
         """Fetch unprocessed emails from the database."""
         self.cursor.execute(
             """
-            SELECT e.id, e.subject, e.sender, e.received_date, e.content
+            SELECT e.id, e.subject, e.sender, e.received_date, e.content, e.headers, e.has_unsubscribe
             FROM emails e
             LEFT JOIN processed_emails p ON e.id = p.email_id
             WHERE p.email_id IS NULL
