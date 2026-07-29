@@ -451,6 +451,66 @@ class TestTransformStageDomainShortcut:
         assert pipeline_context_no_test_mode.metrics["transform_llm_calls"] == 1
 
 
+class TestTransformStageBodyMode:
+    """Unknown-sender LLM input is header-first; body inclusion is gated by llm_body_mode."""
+
+    def _email(self, **overrides):
+        defaults = dict(
+            id="e1",
+            subject="Weekly Digest",
+            sender="news@example.com",
+            content="Line one\nLine two\nLine three\nUnsubscribe here",
+            received_date="2024-01-01T10:00:00Z",
+            headers={"list-unsubscribe": "<https://example.com/unsub>", "precedence": "bulk"},
+        )
+        defaults.update(overrides)
+        return EmailRecord(**defaults)
+
+    def test_none_mode_includes_headers_but_no_body(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.llm_body_mode = "none"
+        mock_email_processor.strip_html.side_effect = lambda c: c
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "List-Unsubscribe: <https://example.com/unsub>" in email_content
+        assert "Precedence: bulk" in email_content
+        assert "Line one" not in email_content
+
+    def test_head_mode_includes_first_n_lines(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.llm_body_mode = "head"
+        pipeline_config.transform.llm_body_head_lines = 2
+        mock_email_processor.strip_html.side_effect = lambda c: c
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "List-Unsubscribe: <https://example.com/unsub>" in email_content
+        assert "Line one" in email_content
+        assert "Line two" in email_content
+        assert "Line three" not in email_content
+
+    def test_full_mode_includes_truncated_body(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.llm_body_mode = "full"
+        mock_email_processor.strip_html.side_effect = lambda c: c
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "List-Unsubscribe: <https://example.com/unsub>" in email_content
+        assert "Line one" in email_content
+        assert "Unsubscribe here" in email_content
+
+
 class TestLoadStage:
     """Test cases for LoadStage."""
 

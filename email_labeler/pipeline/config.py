@@ -46,6 +46,8 @@ class TransformConfig:
     system_prompt: Optional[str] = None  # Custom system prompt (supports templating)
     user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
     domain_rules: Dict[str, str] = field(default_factory=dict)  # registered domain -> category
+    llm_body_mode: str = "none"  # Options: "none", "head", "full"
+    llm_body_head_lines: int = 20  # used when llm_body_mode == "head"
 
 
 GMAIL_TAB_LABEL_IDS = {

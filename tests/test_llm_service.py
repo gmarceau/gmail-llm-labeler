@@ -102,8 +102,8 @@ class TestLLMService:
 
         call_args = mock_openai_client.chat.completions.create.call_args
         content_in_prompt = call_args[1]["messages"][1]["content"]
-        # Should contain truncated content marker
-        assert "[Email truncated for processing]" in content_in_prompt
+        # Should contain the smart-truncation marker (keeps beginning + end)
+        assert "[middle content truncated]" in content_in_prompt
 
     def test_categorize_email_invalid_json_response(self, real_llm_service, mock_openai_client):
         """Test handling invalid JSON response from LLM."""
@@ -303,7 +303,7 @@ class TestLLMService:
             patch("email_labeler.llm_service.LLM_LOG_FILE", "/tmp/test.log"),
         ):
             # Test the _log_interaction method
-            llm_service._log_interaction(1.0, 2.5, '{"category": "Work"}')
+            llm_service._log_interaction(1.0, 2.5, '{"category": "Work"}', "Subject: Test\nFrom: a@b.com")
 
             mock_open.assert_called_once_with("/tmp/test.log", "a")
 

@@ -59,6 +59,24 @@ CLASSIFICATION_METADATA_HEADERS = [
 logger = logging.getLogger(__name__)
 
 
+_CANONICAL_HEADER_CASE = {h.lower(): h for h in CLASSIFICATION_METADATA_HEADERS}
+
+
+def format_classification_headers(headers: Dict[str, str]) -> str:
+    """Format captured classification headers as canonical-cased 'Name: value' lines.
+
+    Headers are emitted in CLASSIFICATION_HEADER_NAMES order, one per line; headers
+    absent from `headers` (or with an empty value) are omitted.
+    """
+    lines = []
+    for name in CLASSIFICATION_HEADER_NAMES:
+        value = headers.get(name)
+        if value:
+            canonical = _CANONICAL_HEADER_CASE.get(name, name)
+            lines.append(f"{canonical}: {value}")
+    return "\n".join(lines)
+
+
 def extract_domain(sender: str) -> str:
     """Extract the registered domain from a From/Sender header value using tldextract."""
     _, address = parseaddr(sender)

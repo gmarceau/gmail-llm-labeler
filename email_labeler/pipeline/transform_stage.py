@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, List, Optional
 from ..progress import SmartBar
 from ..email_processor import EmailProcessor
-from ..gmail_utils import extract_domain
+from ..gmail_utils import extract_domain, format_classification_headers
 from ..llm_service import LLMService
 from .base import EmailRecord, EnrichedEmailRecord, PipelineContext, PipelineStage
 from .config import TransformConfig
@@ -117,38 +117,13 @@ class TransformStage(PipelineStage):
         """Categorize a single email."""
         start_time = time.time()
 
-        # Known-sender shortcut: domain_rules takes precedence over the LLM.
-        domain = extract_domain(email.sender)
-        rule_category = self.config.domain_rules.get(domain)
-        if rule_category and rule_category in self.config.categories:
-            context.increment_metric("transform_domain_shortcut")
-            return EnrichedEmailRecord(
-                **email.__dict__,
-                category=rule_category,
-                explanation=f"known sender: {domain}",
-                confidence=1.0,
-                processing_time=time.time() - start_time,
-            )
+        shortcut = self._try_domain_shortcut(email, context, start_time)
+        if shortcut is not None:
+            return shortcut
         context.increment_metric("transform_llm_calls")
 
-        # Prepare content
-        clean_content = self.email_processor.strip_html(email.content)
+        email_content = self._build_email_content(email)
 
-        # Smart truncation: keep beginning + end to preserve footer (unsubscribe, signatures)
-        if len(clean_content) > self.config.max_content_length:
-            max_len = self.config.max_content_length
-            keep_start = int(max_len * 0.7)  # 70% from beginning
-            keep_end = int(max_len * 0.3)    # 30% from end
-            clean_content = (
-                clean_content[:keep_start]
-                + "\n\n...[middle content truncated]...\n\n"
-                + clean_content[-keep_end:]
-            )
-            logger.debug(f"Smart truncated email: kept first {keep_start} and last {keep_end} chars")
-
-        email_content = f"Subject: {email.subject}\nFrom: {email.sender}\n\n{clean_content}"
-
-        # Categorize using LLM
         if context.test_mode:
             # In test mode, use a mock categorization
             category = "Test Category"
@@ -161,22 +136,70 @@ class TransformStage(PipelineStage):
             logger.warning(f"Unknown category '{category}' for email {email.id}, using 'main'")
             category = "main"
 
-        # Calculate confidence (simple heuristic based on explanation length)
         confidence = self._calculate_confidence(category, explanation)
-
         processing_time = time.time() - start_time
 
-        # Create enriched record
         return EnrichedEmailRecord(
-            id=email.id,
-            subject=email.subject,
-            sender=email.sender,
-            content=email.content,
-            received_date=email.received_date,
+            **email.__dict__,
             category=category,
             explanation=explanation,
             confidence=confidence,
             processing_time=processing_time,
+        )
+
+    def _try_domain_shortcut(
+        self, email: EmailRecord, context: PipelineContext, start_time: float
+    ) -> Optional[EnrichedEmailRecord]:
+        """Known-sender shortcut: domain_rules takes precedence over the LLM.
+
+        Returns None (falling through to the LLM) if the sender's domain has no rule,
+        or its mapped category isn't one of the configured categories.
+        """
+        domain = extract_domain(email.sender)
+        rule_category = self.config.domain_rules.get(domain)
+        if not rule_category or rule_category not in self.config.categories:
+            return None
+
+        context.increment_metric("transform_domain_shortcut")
+        return EnrichedEmailRecord(
+            **email.__dict__,
+            category=rule_category,
+            explanation=f"known sender: {domain}",
+            confidence=1.0,
+            processing_time=time.time() - start_time,
+        )
+
+    def _build_email_content(self, email: EmailRecord) -> str:
+        """Build the LLM input: header-first (no fixed rules — the LLM judges from
+        headers directly), with body inclusion gated by llm_body_mode.
+        """
+        header_block = format_classification_headers(email.headers)
+        email_content = f"Subject: {email.subject}\nFrom: {email.sender}\n{header_block}"
+
+        body = ""
+        if self.config.llm_body_mode == "head":
+            clean_content = self.email_processor.strip_html(email.content)
+            body = "\n".join(clean_content.splitlines()[: self.config.llm_body_head_lines])
+        elif self.config.llm_body_mode == "full":
+            body = self._smart_truncate(self.email_processor.strip_html(email.content))
+
+        if body:
+            email_content += f"\n\n{body}"
+        return email_content
+
+    def _smart_truncate(self, content: str) -> str:
+        """Keep beginning + end to preserve footer (unsubscribe, signatures) when over length."""
+        if len(content) <= self.config.max_content_length:
+            return content
+
+        max_len = self.config.max_content_length
+        keep_start = int(max_len * 0.7)  # 70% from beginning
+        keep_end = int(max_len * 0.3)    # 30% from end
+        logger.debug(f"Smart truncated email: kept first {keep_start} and last {keep_end} chars")
+        return (
+            content[:keep_start]
+            + "\n\n...[middle content truncated]...\n\n"
+            + content[-keep_end:]
         )
 
     def _calculate_confidence(self, category: str, explanation: str) -> float:
