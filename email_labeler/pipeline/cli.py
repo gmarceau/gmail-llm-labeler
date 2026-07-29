@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pydash
+import yaml
 
 from ..config import PathConfig
 from ..database import EmailDatabase
@@ -137,7 +138,7 @@ Examples:
     # Dump domains command
     dump_parser = subparsers.add_parser(
         "dump-domains",
-        help="Output per-domain analysis of cached email metadata as JSON",
+        help="Output per-domain analysis of cached email metadata as YAML",
     )
     dump_parser.add_argument(
         "--config", "-c", type=str, default="config_production_7b.yaml",
@@ -342,7 +343,7 @@ def show_metrics(args):
 
 
 def dump_domains(args):
-    """Output per-domain analysis of cached email metadata as JSON."""
+    """Output per-domain analysis of cached email metadata as YAML."""
     config = PipelineConfig.from_yaml(args.config) if args.config else PipelineConfig.from_env()
     existing_domains = set(getattr(config.transform, "domain_rules", {}).keys())
 
@@ -379,7 +380,7 @@ def dump_domains(args):
         for domain, items in sorted(grouped.items(), key=lambda x: -len(x[1]))
     ]
 
-    print(json.dumps(result, indent=2))
+    print(yaml.dump(result, default_flow_style=False, sort_keys=False, allow_unicode=True))
     db.close()
     return 0
 

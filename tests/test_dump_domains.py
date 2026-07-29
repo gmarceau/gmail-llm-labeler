@@ -1,10 +1,9 @@
 """Tests for the dump-domains CLI command."""
 
-import json
 import tempfile
 from unittest.mock import MagicMock, patch
 
-import pytest
+import yaml
 
 from email_labeler.database import EmailDatabase
 from email_labeler.pipeline.cli import _extract_domain, dump_domains
@@ -68,7 +67,7 @@ class TestDumpDomains:
             result = dump_domains(self._args("fake.yaml"))
 
         assert result == 0
-        output = json.loads(capsys.readouterr().out)
+        output = yaml.safe_load(capsys.readouterr().out)
         domains = {e["domain"] for e in output}
         assert "amazon.com" in domains
         assert "substack.com" in domains  # subdomain stripped to registered domain
@@ -90,7 +89,7 @@ class TestDumpDomains:
 
             dump_domains(self._args("fake.yaml"))
 
-        output = json.loads(capsys.readouterr().out)
+        output = yaml.safe_load(capsys.readouterr().out)
         domains = {e["domain"] for e in output}
         assert "substack.com" not in domains
         assert "amazon.com" in domains
@@ -112,7 +111,7 @@ class TestDumpDomains:
 
             dump_domains(self._args("fake.yaml"))
 
-        output = json.loads(capsys.readouterr().out)
+        output = yaml.safe_load(capsys.readouterr().out)
         counts = [e["count"] for e in output]
         assert counts == sorted(counts, reverse=True)
 
@@ -128,7 +127,7 @@ class TestDumpDomains:
 
             dump_domains(self._args("fake.yaml"))
 
-        output = json.loads(capsys.readouterr().out)
+        output = yaml.safe_load(capsys.readouterr().out)
         big_entry = next(e for e in output if e["domain"] == "big.com")
         assert big_entry["count"] == 10
         assert len(big_entry["samples"]) == 10
@@ -147,7 +146,7 @@ class TestDumpDomains:
 
             dump_domains(self._args("fake.yaml"))
 
-        output = json.loads(capsys.readouterr().out)
+        output = yaml.safe_load(capsys.readouterr().out)
         sample = output[0]["samples"][0]
         assert sample["headers"] == headers
         assert "has_unsubscribe" in sample
@@ -165,5 +164,5 @@ class TestDumpDomains:
             mock_pc.return_value.database_file = tmp_path / "test.db"
             dump_domains(self._args("fake.yaml"))
 
-        output = json.loads(capsys.readouterr().out)
+        output = yaml.safe_load(capsys.readouterr().out)
         assert output[0]["samples"][0]["has_unsubscribe"] is True
