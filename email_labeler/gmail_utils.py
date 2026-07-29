@@ -9,6 +9,8 @@ import os
 import os.path
 from typing import Any, Dict, List, Optional, Union
 
+from .progress import SmartBar
+
 import pydash
 
 from google.auth.transport.requests import Request
@@ -289,7 +291,14 @@ def backfill_email_metadata(processor: Any, email_ids: List[str], db: Any) -> No
     `processor` must expose `_ensure_gmail_client()` and a `.gmail` Resource attribute
     (i.e. an EmailProcessor with lazy_init=True). Auth is deferred until the first ID
     so an empty list is a guaranteed no-op.
+
+    Each email is committed to disk immediately after download, so a ctrl-C only loses
+    the email currently in flight.
     """
+    if not email_ids:
+        return
+    bar = SmartBar("Fetching metadata...", max=len(email_ids), initial_eta_seconds=0.5 * len(email_ids))
+    bar.start()
     for email_id in email_ids:
         processor._ensure_gmail_client()
         try:
@@ -310,6 +319,8 @@ def backfill_email_metadata(processor: Any, email_ids: List[str], db: Any) -> No
             )
         except Exception as e:
             logger.warning(f"Failed to fetch metadata for {email_id}: {e}")
+        bar.next()
+    bar.finish()
 
 
 def get_or_create_label(

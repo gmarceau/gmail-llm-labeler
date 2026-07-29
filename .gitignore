@@ -108,3 +108,8 @@ logs/
 # Local packages
 gmail_llm/
 docs/DESIGN_DOCUMENT.md
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/proxieddb/

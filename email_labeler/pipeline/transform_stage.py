@@ -4,33 +4,12 @@ import logging
 import time
 from datetime import datetime
 from typing import Any, List, Optional
-from progress.bar import Bar
+from ..progress import SmartBar
 from ..email_processor import EmailProcessor
 from ..llm_service import LLMService
 from .base import EmailRecord, EnrichedEmailRecord, PipelineContext, PipelineStage
 from .config import TransformConfig
 
-
-class _SmartBar(Bar):
-    def __init__(self, message, max, initial_eta_seconds):
-        self._initial_eta_seconds = initial_eta_seconds
-        super().__init__(message, max=max, suffix="%(index)d/%(max)d ETA %(eta_hms)s")
-
-    @property
-    def eta(self):
-        if self.index <= 1:
-            return self._initial_eta_seconds
-        return super().eta
-
-    @property
-    def eta_hms(self):
-        s = self.eta
-        if s >= 3600:
-            return f"{int(s // 3600)}h{int((s % 3600) // 60)}m"
-        elif s >= 60:
-            return f"{int(s // 60)}m{int(s % 60)}s"
-        else:
-            return f"{int(s)}s"
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +55,7 @@ class TransformStage(PipelineStage):
         success_count = 0
         error_count = 0
 
-        bar = _SmartBar("Categorizing...", max=len(input_data), initial_eta_seconds=8.0 * len(input_data))
+        bar = SmartBar("Categorizing...", max=len(input_data), initial_eta_seconds=8.0 * len(input_data))
         bar.start()
         for email in input_data:
             try:

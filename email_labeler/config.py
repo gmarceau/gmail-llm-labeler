@@ -122,9 +122,9 @@ class PathConfig:
             Resolved absolute Path object
         """
         if env_value:
-            return Path(env_value).resolve()
+            return Path(env_value).expanduser().resolve()
         elif yaml_value:
-            return Path(yaml_value).resolve()
+            return Path(yaml_value).expanduser().resolve()
         else:
             return default_value.resolve()
 
