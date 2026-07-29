@@ -23,6 +23,7 @@ class TransformConfig:
 
     llm_service: str = "openai"  # Options: "openai", "ollama"
     model: str = "gpt-4o-mini"
+    temperature: float = 0.0  # Sampling temperature; 0 for deterministic classification
     max_content_length: int = 4000
     timeout: int = 30
     skip_on_error: bool = True
@@ -202,6 +203,7 @@ class PipelineConfig:
                 "transform": {
                     "llm_service": self.transform.llm_service,
                     "model": self.transform.model,
+                    "temperature": self.transform.temperature,
                     "max_content_length": self.transform.max_content_length,
                     "timeout": self.transform.timeout,
                     "skip_on_error": self.transform.skip_on_error,

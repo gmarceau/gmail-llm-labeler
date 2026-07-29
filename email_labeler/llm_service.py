@@ -61,6 +61,7 @@ class LLMService:
         lazy_init: bool = False,
         system_prompt: Optional[str] = None,
         user_prompt: Optional[str] = None,
+        temperature: float = 0.0,
     ):
         """Initialize the LLM client.
 
@@ -78,6 +79,7 @@ class LLMService:
         self._lazy_init = lazy_init
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
+        self.temperature = temperature
         self.llm_client: Optional[OpenAI]
         if llm_client is not None:
             self.llm_client = llm_client
@@ -237,7 +239,7 @@ class LLMService:
         completion_kwargs = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.3,
+            "temperature": self.temperature,
             "max_tokens": 500,
         }
 

@@ -22,9 +22,16 @@ _extract_domain = extract_domain
 
 
 class _ExecuteOnlyInfo(logging.Filter):
-    """At default verbosity, suppress INFO messages not from execute()."""
+    """At default verbosity, suppress INFO messages not from execute().
+
+    A record may opt out of this suppression by setting `always_show=True`
+    (via `logger.info(..., extra={"always_show": True})`) — used for output
+    the user must see regardless of verbosity, e.g. the per-email dry-run line.
+    """
     def filter(self, record):
         if record.levelno != logging.INFO:
+            return True
+        if getattr(record, "always_show", False):
             return True
         return record.funcName == "execute"
 

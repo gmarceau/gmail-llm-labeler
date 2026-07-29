@@ -41,6 +41,8 @@ class TransformStage(PipelineStage):
         self.llm_service = llm_service or LLMService(
             categories=config.categories,
             max_content_length=config.max_content_length,
+            model=config.model,
+            temperature=config.temperature,
             system_prompt=config.system_prompt,
             user_prompt=config.user_prompt,
         )

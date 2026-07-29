@@ -29,6 +29,8 @@ pipeline:
   transform:
     llm_service: "ollama"
     model: "qwen2.5:7b"
+#    model: "qwen2.5:3b"  # 3b is faster, worth trying
+    temperature: 0  # Deterministic classification
     max_content_length: 6000
     timeout: 120  # Longer timeout for larger model
     skip_on_error: true
@@ -55,20 +57,23 @@ pipeline:
       on the current experiment variant.
 
       transaction: Automated transactional or informational emails about my recent actions. Order confirmations, shipping updates, receipts, login alerts, password resets, account statements. NOT event invitations I haven't registered for yet. Only AUTOMATED emails!
+                - meetup.com emails ARE transaction when they are about an event I've registered/RSVPed for (confirmations, reminders, updates, changes to that event).
 
       newsletter: Regular content from organizations, institutions, communities, or creators
-                - FROM newsletter platforms: @substack.com, @patreon.com, @buttondown.email, @beehiiv.com
+                - FROM a newsletter/subscription publishing platform
                 - Content from known creators and columnists (political commentary, analysis, essays)
-                - Named newsletters and their domains: Tangle (readtangle.com), Volts, Recomendo, Nonsense, Jupitered, Krugman, skint
+                - Named newsletters (recognized by name in the sender or subject): Volts, Recomendo, Nonsense, Jupitered, Krugman, skint
                 - Community updates or event invitations from schools, nonprofits, organizations, institutions
                 - Podcasts, podcast episodes
                 - Product updates from services I have an account with
-                - Often has large images or tracker pixels
+                - Usually carries bulk-mail headers (List-Unsubscribe, List-Id, Precedence: bulk/list)
 
-      marketing: Mass marketing emails, promotional content, overly eager call to action, customer engagement, surveys. Often has large images or tracker pixels.
+      marketing: Mass marketing emails, promotional content, overly eager call to action, customer engagement, surveys. Often carries bulk-mail headers (List-Unsubscribe, List-Id, Feedback-Id).
                 - Recruiter and sales outreach: cold emails pitching a job opening, candidacy, product, or partnership, even when personalized and addressed to me by name. NOT transaction (I did not take an action that triggered it) and NOT main (it is solicitation, not personal correspondence).
+                - meetup.com emails ARE marketing when they announce/recommend NEW events I have NOT registered for (group digests, "events for you", new event announcements).
+                - Cold outreach from an unfamiliar company/organization domain (i.e. NOT a personal freemail address like gmail.com) using a casual scheduling subject line — e.g. "Guillaume <> Duet", "Quick chat?", "Intro call".
 
-      main: Personal correspondence and one-on-one emails, friends, family, colleagues, or from my wife Linnea Paton. Direct replies to my emails. Meeting invitations from specific people. Minimal or no images, personal tone. NOT automated, NOT from organizations/companies. NOT broadcast content (no podcasts, newsletters, mass announcements)
+      main: Personal, one-on-one correspondence from an actual person — friends, family, colleagues, or my wife Linnea Paton. Typically from a personal freemail address (gmail.com and similar) or an individual's own address, with NO bulk-mail headers (no List-Unsubscribe/List-Id/Feedback-Id/Precedence: bulk). NOT automated, NOT from organizations/companies. NOT broadcast content (no podcasts, newsletters, mass announcements). NOT a company-domain solicitation or scheduling pitch
 
 
       ---

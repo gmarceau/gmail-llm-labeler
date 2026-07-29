@@ -136,7 +136,8 @@ class LoadStage(PipelineStage):
             tab = self.config.category_tab_map.get(email.category, "-")
             logger.info(
                 f"DRY RUN: {email.subject!r} from {email.sender} "
-                f"-> category={email.category}, tab={tab}"
+                f"-> category={email.category}, tab={tab}",
+                extra={"always_show": True},
             )
 
         # Apply each action

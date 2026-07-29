@@ -9,6 +9,10 @@ tasks:
     cmds:
       - venv/bin/python -m pytest {{.CLI_ARGS}}
 
+  dry-run:
+    cmds:
+      - venv/bin/python -m email_labeler.pipeline.cli run --config config_production_7b.yaml --dry-run --limit 50
+
   validate-config:
     desc: Validate a pipeline config file (pass CONFIG to target a different file, e.g. task validate-config CONFIG=my_config.yaml)
     cmds:

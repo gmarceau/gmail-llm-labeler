@@ -65,6 +65,10 @@ class EmailPipeline:
             self.llm_service = LLMService(
                 categories=self.config.transform.categories,
                 max_content_length=self.config.transform.max_content_length,
+                model=self.config.transform.model,
+                temperature=self.config.transform.temperature,
+                system_prompt=self.config.transform.system_prompt,
+                user_prompt=self.config.transform.user_prompt,
                 lazy_init=True,
             )
         if self.metrics_tracker is None:
