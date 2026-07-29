@@ -7,6 +7,7 @@ import base64
 import logging
 import os
 import os.path
+import re
 from email.headerregistry import Address
 from email.utils import parseaddr
 from typing import Dict, List, Optional, Union
@@ -94,6 +95,22 @@ def extract_domain(sender: str) -> str:
         return ""
     hostname = Address(addr_spec=address).domain.lower()
     return tldextract.extract(hostname).top_domain_under_public_suffix or hostname
+
+
+# Leading reply/forward markers ("Re:", "Fwd:", "Fw:"), possibly stacked
+# ("Re: Fwd:"), case-insensitive. Stripped before the subject is shown to the LLM.
+_REPLY_PREFIX_RE = re.compile(r"^\s*(?:(?:re|fwd?|fw)\s*:\s*)+", re.IGNORECASE)
+
+
+def strip_reply_prefix(subject: str) -> str:
+    """Remove leading Re:/Fwd: markers so the LLM judges the underlying subject.
+
+    A reply/forward prefix is not itself a signal of personal correspondence — a
+    recruiter or sales/fundraising sender resends "Re:" follow-ups to threads that
+    were never answered. Stripping it keeps a "Re: <pitch>" from being read as a
+    personal reply. Only the LLM's view is normalized; the stored subject is intact.
+    """
+    return _REPLY_PREFIX_RE.sub("", subject)
 
 
 def get_gmail_client(

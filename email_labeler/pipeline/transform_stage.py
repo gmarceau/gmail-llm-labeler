@@ -6,7 +6,12 @@ from datetime import datetime
 from typing import Any, List, Optional
 from ..progress import SmartBar
 from ..email_processor import EmailProcessor
-from ..gmail_utils import extract_address, extract_domain, format_classification_headers
+from ..gmail_utils import (
+    extract_address,
+    extract_domain,
+    format_classification_headers,
+    strip_reply_prefix,
+)
 from ..llm_service import LLMService
 from .base import EmailRecord, EnrichedEmailRecord, PipelineContext, PipelineStage
 from .config import TransformConfig
@@ -185,7 +190,8 @@ class TransformStage(PipelineStage):
         headers directly), with body inclusion gated by llm_body_mode.
         """
         header_block = format_classification_headers(email.headers)
-        email_content = f"Subject: {email.subject}\nFrom: {email.sender}\n{header_block}"
+        subject = strip_reply_prefix(email.subject)
+        email_content = f"Subject: {subject}\nFrom: {email.sender}\n{header_block}"
 
         body = ""
         if self.config.llm_body_mode == "head":

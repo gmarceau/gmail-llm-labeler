@@ -4,6 +4,7 @@ from email_labeler.gmail_utils import (
     extract_address,
     extract_domain,
     format_classification_headers,
+    strip_reply_prefix,
 )
 
 
@@ -22,6 +23,38 @@ class TestExtractAddress:
 
     def test_empty_string(self):
         assert extract_address("") == ""
+
+
+class TestStripReplyPrefix:
+    def test_re_prefix(self):
+        assert strip_reply_prefix("Re: Guillaume, Genius AI & Series D") == (
+            "Guillaume, Genius AI & Series D"
+        )
+
+    def test_fwd_prefix(self):
+        assert strip_reply_prefix("Fwd: Twin girls") == "Twin girls"
+
+    def test_fw_prefix(self):
+        assert strip_reply_prefix("Fw: notes") == "notes"
+
+    def test_stacked_prefixes(self):
+        assert strip_reply_prefix("Re: Fwd: Re: hello") == "hello"
+
+    def test_case_insensitive(self):
+        assert strip_reply_prefix("RE: hello") == "hello"
+        assert strip_reply_prefix("fwd: hello") == "hello"
+
+    def test_no_prefix_unchanged(self):
+        assert strip_reply_prefix("Guillaume, Genius AI & Series D") == (
+            "Guillaume, Genius AI & Series D"
+        )
+
+    def test_does_not_strip_midword(self):
+        # "Repucci" starts with "Re" but is not a "Re:" marker.
+        assert strip_reply_prefix("Repucci says hi") == "Repucci says hi"
+
+    def test_empty(self):
+        assert strip_reply_prefix("") == ""
 
 
 class TestExtractDomain:
