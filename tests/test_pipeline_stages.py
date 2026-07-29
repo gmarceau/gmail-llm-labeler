@@ -229,6 +229,39 @@ class TestExtractStage:
             "msg1", "News", "news@sub.com", "2024-01-01T10:00:00Z", "", {}, True
         )
 
+    def test_dry_run_fetches_from_gmail_but_does_not_save(
+        self, mock_email_processor, email_database, pipeline_config
+    ):
+        """DRY RUN still fetches real emails so they can be categorized, but writes nothing."""
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        mock_email_processor.fetch_emails_from_gmail.return_value = [
+            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1", {}),
+        ]
+        email_database.save_email = MagicMock()
+        dry_run_context = PipelineContext.create(config=pipeline_config, dry_run=True)
+
+        emails = stage.execute(None, dry_run_context)
+
+        assert len(emails) == 1
+        assert emails[0].id == "msg1"
+        email_database.save_email.assert_not_called()
+
+    def test_dry_run_fetches_from_database(
+        self, mock_email_processor, email_database, pipeline_config
+    ):
+        """DRY RUN with a database source still reads real cached emails (pure read, no write)."""
+        pipeline_config.extract.source = "database"
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        email_database.cursor.fetchall.return_value = [
+            ("msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z", "", "{}", 0),
+        ]
+        dry_run_context = PipelineContext.create(config=pipeline_config, dry_run=True)
+
+        emails = stage.execute(None, dry_run_context)
+
+        assert len(emails) == 1
+        assert emails[0].id == "msg1"
+
 
 class TestTransformStage:
     """Test cases for TransformStage."""
@@ -363,6 +396,24 @@ class TestTransformStage:
 
         # Should return empty list for timeout cases
         assert len(enriched_emails) == 0
+
+    def test_dry_run_still_categorizes(
+        self, llm_service, mock_email_processor, pipeline_config, sample_email_records
+    ):
+        """DRY RUN runs real categorization (sender-shortcut/LLM); it just never writes."""
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        llm_service.categorize_email.side_effect = [
+            ("Work", "Business email"),
+            ("Newsletters", "Marketing content"),
+            ("Personal", "Personal message"),
+        ]
+        dry_run_context = PipelineContext.create(config=pipeline_config, dry_run=True)
+
+        enriched_emails = stage.execute(sample_email_records, dry_run_context)
+
+        assert len(enriched_emails) == 3
+        assert enriched_emails[0].category == "Work"
+        assert llm_service.categorize_email.call_count == 3
 
 
 class TestTransformStageSenderShortcut:

@@ -70,14 +70,13 @@ class TransformStage(PipelineStage):
                         confidence=0.0,
                         processing_time=0.0,
                     )
-                elif context.dry_run:
-                    logger.info(f"DRY RUN: Would categorize email {email.id}")
                 else:
+                    # dry_run still runs real categorization (sender-shortcut/LLM) so the
+                    # would-apply summary reflects real decisions; it just never writes.
                     enriched = self._categorize_email(email, context)
 
-                if not context.dry_run:
-                    enriched_emails.append(enriched)
-                    success_count += 1
+                enriched_emails.append(enriched)
+                success_count += 1
 
             except Exception as e:
                 error_count += 1

@@ -71,8 +71,7 @@ class ExtractStage(PipelineStage):
         logger.debug(f"Fetching emails from Gmail with query: {self.config.gmail_query}")
 
         if context.dry_run:
-            logger.info("DRY RUN: Would fetch emails from Gmail")
-            return []
+            logger.info("DRY RUN: Fetching emails from Gmail for real; nothing will be written")
 
         raw_emails = self.email_processor.fetch_emails_from_gmail(
             query=self.config.gmail_query, limit=self.config.max_results or self.config.batch_size
@@ -86,7 +85,8 @@ class ExtractStage(PipelineStage):
                     email_id, subject, sender, date, content,
                     headers=headers, has_unsubscribe=has_unsubscribe,
                 )
-                self.database.save_email(email.id, email.subject, email.sender, email.received_date, "", headers, has_unsubscribe)
+                if not context.dry_run:
+                    self.database.save_email(email.id, email.subject, email.sender, email.received_date, "", headers, has_unsubscribe)
                 emails.append(email)
             except Exception as e:
                 logger.warning(f"Failed to normalize email: {e}")
@@ -99,10 +99,6 @@ class ExtractStage(PipelineStage):
     def _extract_from_database(self, context: PipelineContext) -> List[EmailRecord]:
         """Extract unprocessed emails from database."""
         logger.debug("Fetching unprocessed emails from database")
-
-        if context.dry_run:
-            logger.info("DRY RUN: Would fetch emails from database")
-            return []
 
         raw_emails = self.database.get_unprocessed_emails(limit=self.config.batch_size)
 

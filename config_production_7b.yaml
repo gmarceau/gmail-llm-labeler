@@ -39,30 +39,10 @@ pipeline:
       - "marketing"
       - "main"
 
-    # Known senders skip the LLM entirely. Reviewed biweekly via `dump-domains`;
-    # a rule here takes precedence over everything below. Keys may be a bare domain
-    # (matches every sender on it) or a full address (matches one sender — use this to
-    # route recruiter noise off a personal domain, e.g. someone@gmail.com: marketing).
-    # A full-address rule wins over a domain rule for the same sender.
-    sender_rules:
-      substack.com: newsletter
-      patreon.com: newsletter
-      buttondown.email: newsletter
-      beehiiv.com: newsletter
-
-    # Freemail domains: in `dump-domains` these are broken out per individual sender
-    # (each address is a different person) rather than lumped under the domain, so you can
-    # pick out e.g. a recruiter and add their exact address to sender_rules above.
-    personal_domains:
-      - gmail.com
-      - hotmail.com
-      - yahoo.com
-      - outlook.com
-      - icloud.com
-      - aol.com
-      - me.com
-      - proton.me
-      - protonmail.com
+    # Known senders skip the LLM entirely. The reviewed sender_rules and personal_domains
+    # live in their own file (path is relative to this config), because `review-senders`
+    # appends to them every two weeks — see that file for the format and precedence rules.
+    sender_rules_file: sender_rules_production_7b.yaml
 
     # Variant 1 of the body-inclusion A/B test: no email body, headers only.
     llm_body_mode: none
@@ -79,13 +59,14 @@ pipeline:
       newsletter: Regular content from organizations, institutions, communities, or creators
                 - FROM newsletter platforms: @substack.com, @patreon.com, @buttondown.email, @beehiiv.com
                 - Content from known creators and columnists (political commentary, analysis, essays)
-                - Named newsletters: Tangle, Volts, Recomendo, Nonsense, Jupitered, Krugman, skint
+                - Named newsletters and their domains: Tangle (readtangle.com), Volts, Recomendo, Nonsense, Jupitered, Krugman, skint
                 - Community updates or event invitations from schools, nonprofits, organizations, institutions
                 - Podcasts, podcast episodes
                 - Product updates from services I have an account with
                 - Often has large images or tracker pixels
 
       marketing: Mass marketing emails, promotional content, overly eager call to action, customer engagement, surveys. Often has large images or tracker pixels.
+                - Recruiter and sales outreach: cold emails pitching a job opening, candidacy, product, or partnership, even when personalized and addressed to me by name. NOT transaction (I did not take an action that triggered it) and NOT main (it is solicitation, not personal correspondence).
 
       main: Personal correspondence and one-on-one emails, friends, family, colleagues, or from my wife Linnea Paton. Direct replies to my emails. Meeting invitations from specific people. Minimal or no images, personal tone. NOT automated, NOT from organizations/companies. NOT broadcast content (no podcasts, newsletters, mass announcements)
 

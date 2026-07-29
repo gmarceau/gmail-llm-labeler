@@ -1,4 +1,4 @@
-"""Tests for the dump-domains CLI command."""
+"""Tests for the review-senders CLI command."""
 
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import yaml
 
 from email_labeler.database import EmailDatabase
-from email_labeler.pipeline.cli import _extract_domain, dump_domains
+from email_labeler.pipeline.cli import _extract_domain, review_senders
 
 
 class TestExtractDomain:
@@ -33,7 +33,7 @@ class TestExtractDomain:
         assert _extract_domain("no-reply@updates.example.com>") == ""
 
 
-class TestDumpDomains:
+class TestReviewSenders:
     def _make_db_with_emails(self, tmp_path, emails):
         """Create a real DB populated with labeled emails.
 
@@ -65,7 +65,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.personal_domains = []
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            result = dump_domains(self._args("fake.yaml"))
+            result = review_senders(self._args("fake.yaml"))
 
         assert result == 0
         output = yaml.safe_load(capsys.readouterr().out)
@@ -89,7 +89,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.personal_domains = []
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            review_senders(self._args("fake.yaml"))
 
         output = yaml.safe_load(capsys.readouterr().out)
         domains = {e["rule"] for e in output}
@@ -110,7 +110,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.personal_domains = []
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            review_senders(self._args("fake.yaml"))
 
         output = yaml.safe_load(capsys.readouterr().out)
         gmail_entry = next(e for e in output if e["rule"] == "gmail.com")
@@ -137,7 +137,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.personal_domains = ["gmail.com"]
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            review_senders(self._args("fake.yaml"))
 
         output = yaml.safe_load(capsys.readouterr().out)
         rules = {e["rule"] for e in output}
@@ -170,7 +170,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.personal_domains = []
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            review_senders(self._args("fake.yaml"))
 
         output = yaml.safe_load(capsys.readouterr().out)
         counts = [e["count"] for e in output]
@@ -187,7 +187,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.personal_domains = []
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            review_senders(self._args("fake.yaml"))
 
         output = yaml.safe_load(capsys.readouterr().out)
         big_entry = next(e for e in output if e["rule"] == "big.com")
@@ -207,7 +207,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.personal_domains = []
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
-            dump_domains(self._args("fake.yaml"))
+            review_senders(self._args("fake.yaml"))
 
         output = yaml.safe_load(capsys.readouterr().out)
         sample = output[0]["samples"][0]
@@ -226,7 +226,7 @@ class TestDumpDomains:
             mock_cfg.return_value.transform.sender_rules = {}
             mock_cfg.return_value.transform.personal_domains = []
             mock_pc.return_value.database_file = tmp_path / "test.db"
-            dump_domains(self._args("fake.yaml"))
+            review_senders(self._args("fake.yaml"))
 
         output = yaml.safe_load(capsys.readouterr().out)
         assert output[0]["samples"][0]["has_unsubscribe"] is True

@@ -14,10 +14,10 @@ tasks:
     cmds:
       - venv/bin/python -m email_labeler.pipeline.cli validate-config {{.CONFIG}}
 
-  biweekly-review:
+  review-senders:
     desc: >
-      Surface sender domains not yet in sender_rules, grouped by count with header
-      samples, so you can decide their category and add them to CONFIG's sender_rules.
-      Run every two weeks. Pass CONFIG to target a different file.
+      List senders not yet covered by sender_rules, as pasteable rule candidates ranked by
+      count with header/subject samples, so you can decide a category and add them to
+      CONFIG's sender_rules. Run every two weeks. Pass CONFIG to target a different file.
     cmds:
-      - venv/bin/python -m email_labeler.pipeline.cli dump-domains --config {{.CONFIG}}
+      - venv/bin/python -m email_labeler.pipeline.cli review-senders --config {{.CONFIG}}

@@ -8,11 +8,13 @@ token.json
 *.key
 *.p12
 
+
 # Databases - contains user email data
 *.db
 *.sqlite
 *.sqlite3
 email_pipeline*.db
+sender_rules_production_7b.yaml
 
 # Log files - may contain PII
 *.log

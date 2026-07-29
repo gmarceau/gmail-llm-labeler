@@ -46,9 +46,13 @@ class TransformConfig:
     system_prompt: Optional[str] = None  # Custom system prompt (supports templating)
     user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
     sender_rules: Dict[str, str] = field(default_factory=dict)  # full address or registered domain -> category
-    # Freemail/personal domains: in the biweekly review these are broken out per individual
+    # Freemail/personal domains: in `review-senders` these are broken out per individual
     # sender (you'd never rule the whole domain), rather than collapsed into one domain row.
     personal_domains: List[str] = field(default_factory=list)
+    # Optional external file (path relative to the main config) holding top-level
+    # `sender_rules:` and `personal_domains:`. When set, from_yaml loads it into the two
+    # fields above so the growing reviewed-rules list stays out of the main pipeline config.
+    sender_rules_file: Optional[str] = None
     llm_body_mode: str = "none"  # Options: "none", "head", "full"
     llm_body_head_lines: int = 20  # used when llm_body_mode == "head"
 
@@ -127,6 +131,18 @@ class PipelineConfig:
         # Create configs from nested dictionaries
         extract_config = ExtractConfig(**pipeline_data.get("extract", {}))
         transform_config = TransformConfig(**pipeline_data.get("transform", {}))
+
+        # An external sender-rules file (path relative to this config) is the source of
+        # truth for sender_rules/personal_domains when present.
+        if transform_config.sender_rules_file:
+            rules_path = os.path.join(
+                os.path.dirname(os.path.abspath(path)), transform_config.sender_rules_file
+            )
+            with open(rules_path) as rf:
+                rules_data = yaml.safe_load(rf) or {}
+            transform_config.sender_rules = rules_data.get("sender_rules") or {}
+            transform_config.personal_domains = rules_data.get("personal_domains") or []
+
         load_config = LoadConfig(**pipeline_data.get("load", {}))
         sync_config = SyncConfig(**pipeline_data.get("sync", {}))
         monitoring_config = MonitoringConfig(**pipeline_data.get("monitoring", {}))
@@ -192,8 +208,15 @@ class PipelineConfig:
                     "categories": self.transform.categories,
                     "system_prompt": self.transform.system_prompt,
                     "user_prompt": self.transform.user_prompt,
-                    "sender_rules": self.transform.sender_rules,
-                    "personal_domains": self.transform.personal_domains,
+                    # An external file owns the rules when set; otherwise inline them.
+                    **(
+                        {"sender_rules_file": self.transform.sender_rules_file}
+                        if self.transform.sender_rules_file
+                        else {
+                            "sender_rules": self.transform.sender_rules,
+                            "personal_domains": self.transform.personal_domains,
+                        }
+                    ),
                     "llm_body_mode": self.transform.llm_body_mode,
                     "llm_body_head_lines": self.transform.llm_body_head_lines,
                 },

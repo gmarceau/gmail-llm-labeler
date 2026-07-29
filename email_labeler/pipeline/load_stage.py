@@ -132,6 +132,13 @@ class LoadStage(PipelineStage):
             f"and actions: {category_actions}"
         )
 
+        if context.dry_run:
+            tab = self.config.category_tab_map.get(email.category, "-")
+            logger.info(
+                f"DRY RUN: {email.subject!r} from {email.sender} "
+                f"-> category={email.category}, tab={tab}"
+            )
+
         # Apply each action
         for action in category_actions:
             try:
@@ -140,7 +147,6 @@ class LoadStage(PipelineStage):
                     actions_taken.append(f"[preview] {action}")
 
                 elif context.dry_run:
-                    logger.info(f"DRY RUN: Would {action} for email {email.id}")
                     actions_taken.append(f"[dry-run] {action}")
 
                 else:

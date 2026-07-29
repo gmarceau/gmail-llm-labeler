@@ -135,12 +135,12 @@ Examples:
         "--file", type=str, default="pipeline_metrics.json", help="Path to metrics file"
     )
 
-    # Dump domains command
-    dump_parser = subparsers.add_parser(
-        "dump-domains",
-        help="Output per-domain analysis of cached email metadata as YAML",
+    # Review senders command
+    review_parser = subparsers.add_parser(
+        "review-senders",
+        help="List senders not yet covered by sender_rules, as pasteable rule candidates (YAML)",
     )
-    dump_parser.add_argument(
+    review_parser.add_argument(
         "--config", "-c", type=str, default="config_production_7b.yaml",
         help="Path to configuration YAML file (used for DB path and existing sender_rules)",
     )
@@ -342,8 +342,13 @@ def show_metrics(args):
         return 1
 
 
-def dump_domains(args):
-    """Output per-domain analysis of cached email metadata as YAML."""
+def review_senders(args):
+    """List senders not yet covered by sender_rules, as pasteable rule candidates (YAML).
+
+    Groups cached email metadata by a `rule` key: an individual address for senders on a
+    personal domain, otherwise the registered domain. Senders already covered by a
+    sender_rules entry (by address or domain) are omitted.
+    """
     config = PipelineConfig.from_yaml(args.config) if args.config else PipelineConfig.from_env()
     # sender_rules keys mix full addresses (recruiter@gmail.com) and bare domains
     # (substack.com); a sender is already covered if either its address or domain has a rule.
@@ -425,8 +430,8 @@ def main():
         return validate_config(args)
     elif args.command == "show-metrics":
         return show_metrics(args)
-    elif args.command == "dump-domains":
-        return dump_domains(args)
+    elif args.command == "review-senders":
+        return review_senders(args)
     else:
         parser.print_help()
         return 1
