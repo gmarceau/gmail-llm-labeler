@@ -1,0 +1,25 @@
+#!/bin/zsh
+set -euo pipefail
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_ROOT="${SCRIPT_DIR:h}"
+VENV_PYTHON="$PROJECT_ROOT/venv/bin/python"
+CONFIG_FILE="config_production_7b.yaml"
+
+if [[ ! -f "$VENV_PYTHON" ]]; then
+    echo "Error: Virtual environment not found at $VENV_PYTHON" >&2
+    echo "Run: cd $PROJECT_ROOT && python3 -m venv venv && pip install -e ." >&2
+    exit 1
+fi
+
+if [[ ! -f "$PROJECT_ROOT/$CONFIG_FILE" ]]; then
+    echo "Error: Config file not found: $PROJECT_ROOT/$CONFIG_FILE" >&2
+    exit 1
+fi
+
+cd "$PROJECT_ROOT" || {
+    echo "Error: Cannot change to project directory: $PROJECT_ROOT" >&2
+    exit 1
+}
+
+exec "$VENV_PYTHON" -m email_labeler.pipeline.cli run --config "$CONFIG_FILE"

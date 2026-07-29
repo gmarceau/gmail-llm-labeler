@@ -1,0 +1,102 @@
+# Production Configuration - Qwen 2.5 7B Model
+# Full batch processing with labels applied
+#
+# Usage:
+#   gmail-pipeline run --config config_production_7b.yaml
+#
+# This will:
+#   - Process up to 5000 emails from inbox
+#   - Use qwen2.5:7b model (more accurate, slower)
+#   - APPLY LABELS: Actually creates Gmail labels
+#   - Recommended for higher accuracy when you have time
+
+paths:
+  database_file: ~/.local/share/gmail-llm-labeler/email_pipeline.db
+  llm_log_file: ~/.local/share/gmail-llm-labeler/logs/llm_interactions.json
+  error_log_file: ~/.local/share/gmail-llm-labeler/logs/categorization_errors.log
+
+pipeline:
+  dry_run: false  # LABELS WILL BE APPLIED
+  continue_on_error: true
+  max_retries: 3
+
+  extract:
+    source: "gmail"
+    gmail_query: "in:inbox -label:CHAOC -label:paton-family -label:main -label:marketing -label:newsletter -label:transaction"
+    batch_size: 10
+    max_results: 500
+
+  transform:
+    llm_service: "ollama"
+    model: "qwen2.5:7b"
+    max_content_length: 6000
+    timeout: 120  # Longer timeout for larger model
+    skip_on_error: true
+
+    categories:
+      - "transaction"
+      - "newsletter"
+      - "marketing"
+      - "main"
+
+    user_prompt: |
+      Categorize this email into exactly ONE category. Choose the best match:
+
+      transaction: Automated transactional or informational emails about my recent actions. Order confirmations, shipping updates, receipts, login alerts, password resets, account statements. NOT event invitations I haven't registered for yet. Only AUTOMATED emails!
+
+      newsletter: Regular content from organizations, institutions, communities, or creators
+                - FROM newsletter platforms: @substack.com, @patreon.com, @buttondown.email, @beehiiv.com
+                - Content from known creators and columnists (political commentary, analysis, essays)
+                - Named newsletters: Tangle, Volts, Recomendo, Nonsense, Jupitered, Krugman, skint
+                - Community updates or event invitations from schools, nonprofits, organizations, institutions
+                - Podcasts, podcast episodes
+                - Product updates from services I have an account with
+                - Often has large images or tracker pixels
+
+      marketing: Mass marketing emails, promotional content, overly eager call to action, customer engagement, surveys. Often has large images or tracker pixels.
+
+      main: Personal correspondence and one-on-one emails, friends, family, colleagues, or from my wife Linnea Paton. Direct replies to my emails. Meeting invitations from specific people. Minimal or no images, personal tone. NOT automated, NOT from organizations/companies. NOT broadcast content (no podcasts, newsletters, mass announcements)
+
+
+      ---
+      Email content:
+      {email_content}
+
+      ---
+      CRITICAL RULES
+      1. ONLY use EXACT on of the 4 categories: transaction, newsletter, marketing, main
+      2. DO NOT invent new categories
+      3. If unsure, choose the closest match from the 4 categories above
+
+
+      Respond ONLY with valid JSON:
+      {{
+          "category": "<category>", // MUST be exactly: transaction, newsletter, marketing, or main
+          "explanation": <a few words explaining the choice>"
+      }}
+
+  load:
+    category_tab_map:
+      transaction: updates
+      newsletter: forums
+      marketing: updates
+      main: primary
+
+    apply_labels: true
+    create_missing_labels: true
+    default_actions:
+      - "apply_label"
+      - "apply_category_tab"
+
+  sync:
+    database_path: /Users/gmarceau/.local/share/gmail-llm-labeler/email_pipeline.db
+    save_metrics: true
+    track_history: true
+    batch_size: 50
+    track_metrics: true
+
+  monitoring:
+    log_level: "INFO"
+    metrics_export: "json"
+    metrics_path: /Users/gmarceau/.local/share/gmail-llm-labeler/pipeline_metrics_production_7b.json
+    enable_tracing: false
