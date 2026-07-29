@@ -254,42 +254,6 @@ class TestEmailDatabase:
         assert result == ["id1", "id2", "id3"]
         email_database.cursor.execute.assert_called_with("SELECT email_id FROM email_labels")
 
-    def test_get_email_ids_missing_metadata_returns_unlabeled(self):
-        """Integration: returns IDs in email_labels with no entry in emails."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db = EmailDatabase(database_file=tmp.name)
-            # labeled but not cached
-            db.update_email_labels("e1", "newsletter", [])
-            # labeled AND cached with a sender
-            db.save_email("e2", "Sub", "a@b.com", "2024-01-01", "")
-            db.update_email_labels("e2", "main", [])
-
-            missing = db.get_email_ids_missing_metadata()
-            assert "e1" in missing
-            assert "e2" not in missing
-            db.close()
-
-    def test_get_email_ids_missing_metadata_empty_sender_counts_as_missing(self):
-        """Integration: a row in emails with empty sender is treated as missing."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db = EmailDatabase(database_file=tmp.name)
-            db.save_email("e1", "Sub", "", "2024-01-01", "")  # empty sender
-            db.update_email_labels("e1", "main", [])
-
-            missing = db.get_email_ids_missing_metadata()
-            assert "e1" in missing
-            db.close()
-
-    def test_get_email_ids_missing_metadata_empty_when_all_cached(self):
-        """Integration: returns empty list when every labeled email has cached metadata."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            db = EmailDatabase(database_file=tmp.name)
-            db.save_email("e1", "Sub", "a@b.com", "2024-01-01", "")
-            db.update_email_labels("e1", "newsletter", [])
-
-            assert db.get_email_ids_missing_metadata() == []
-            db.close()
-
     def test_get_all_email_metadata(self, email_database):
         """Test retrieving metadata for all emails."""
         rows = [

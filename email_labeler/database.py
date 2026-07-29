@@ -194,16 +194,6 @@ class EmailDatabase:
         )
         return self.cursor.fetchall()
 
-    def get_email_ids_missing_metadata(self) -> List[str]:
-        """Return email_ids from email_labels with no cached entry in emails (or empty sender)."""
-        self.cursor.execute("""
-            SELECT el.email_id
-            FROM email_labels el
-            LEFT JOIN emails e ON el.email_id = e.id
-            WHERE e.id IS NULL OR e.sender IS NULL OR e.sender = ''
-        """)
-        return [row[0] for row in self.cursor.fetchall()]
-
     def close(self):
         """Close the database connection."""
         if self.owns_connection:

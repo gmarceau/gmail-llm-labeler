@@ -9,9 +9,7 @@ import os
 import os.path
 from email.headerregistry import Address
 from email.utils import parseaddr
-from typing import Any, Dict, List, Optional, Union
-
-from .progress import SmartBar
+from typing import Dict, List, Optional, Union
 
 import pydash
 import tldextract
@@ -313,44 +311,6 @@ def get_email_content(
     except Exception as e:
         logger.error(f"Unexpected error when processing email {email_id}: {e}")
         raise
-
-
-def backfill_email_metadata(processor: Any, email_ids: List[str], db: Any) -> None:
-    """Fetch Gmail metadata for each ID and persist it to the emails table.
-
-    `processor` must expose `_ensure_gmail_client()` and a `.gmail` Resource attribute
-    (i.e. an EmailProcessor with lazy_init=True). Auth is deferred until the first ID
-    so an empty list is a guaranteed no-op.
-
-    Each email is committed to disk immediately after download, so a ctrl-C only loses
-    the email currently in flight.
-    """
-    if not email_ids:
-        return
-    bar = SmartBar("Fetching metadata...", max=len(email_ids), initial_eta_seconds=0.5 * len(email_ids))
-    bar.start()
-    for email_id in email_ids:
-        processor._ensure_gmail_client()
-        try:
-            data = get_email_content(
-                processor.gmail,
-                email_id,
-                format="metadata",
-                metadata_headers=CLASSIFICATION_METADATA_HEADERS,
-            )
-            db.save_email(
-                email_id,
-                data.get("subject", ""),
-                data.get("from", ""),
-                data.get("date", ""),
-                "",
-                data.get("headers", {}),
-                data.get("has_unsubscribe", False),
-            )
-        except Exception as e:
-            logger.warning(f"Failed to fetch metadata for {email_id}: {e}")
-        bar.next()
-    bar.finish()
 
 
 def get_or_create_label(
