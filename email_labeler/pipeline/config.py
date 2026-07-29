@@ -45,6 +45,7 @@ class TransformConfig:
     )
     system_prompt: Optional[str] = None  # Custom system prompt (supports templating)
     user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
+    domain_rules: Dict[str, str] = field(default_factory=dict)  # registered domain -> category
 
 
 GMAIL_TAB_LABEL_IDS = {

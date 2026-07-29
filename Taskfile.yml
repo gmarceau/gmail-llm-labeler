@@ -1,0 +1,7 @@
+version: "3"
+
+tasks:
+  test:
+    desc: Run the test suite (pass CLI_ARGS to target specific tests, e.g. task test CLI_ARGS=tests/test_foo.py)
+    cmds:
+      - venv/bin/python -m pytest {{.CLI_ARGS}}

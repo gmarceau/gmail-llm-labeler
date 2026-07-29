@@ -7,11 +7,14 @@ import base64
 import logging
 import os
 import os.path
+from email.headerregistry import Address
+from email.utils import parseaddr
 from typing import Any, Dict, List, Optional, Union
 
 from .progress import SmartBar
 
 import pydash
+import tldextract
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -54,6 +57,15 @@ CLASSIFICATION_METADATA_HEADERS = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def extract_domain(sender: str) -> str:
+    """Extract the registered domain from a From/Sender header value using tldextract."""
+    _, address = parseaddr(sender)
+    if not address or "@" not in address:
+        return ""
+    hostname = Address(addr_spec=address).domain.lower()
+    return tldextract.extract(hostname).top_domain_under_public_suffix or hostname
 
 
 def get_gmail_client(

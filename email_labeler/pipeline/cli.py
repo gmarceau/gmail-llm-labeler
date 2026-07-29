@@ -5,28 +5,20 @@ import argparse
 import json
 import logging
 import sys
-from email.headerregistry import Address
-from email.utils import parseaddr
 from pathlib import Path
 
 import pydash
-import tldextract
 
 from ..config import PathConfig
 from ..database import EmailDatabase
 from ..email_processor import EmailProcessor
-from ..gmail_utils import backfill_email_metadata
+from ..gmail_utils import backfill_email_metadata, extract_domain
 from .config import PipelineConfig
 from .orchestrator import EmailPipeline
 
-
-def _extract_domain(sender: str) -> str:
-    """Extract the registered domain from a From/Sender header value using tldextract."""
-    _, address = parseaddr(sender)
-    if not address or "@" not in address:
-        return ""
-    hostname = Address(addr_spec=address).domain.lower()
-    return tldextract.extract(hostname).top_domain_under_public_suffix or hostname
+# Backward-compatible alias; extract_domain now lives in gmail_utils to avoid an
+# import cycle (transform_stage needs it too, and it must not import from cli).
+_extract_domain = extract_domain
 
 
 class _ExecuteOnlyInfo(logging.Filter):

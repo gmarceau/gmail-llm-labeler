@@ -332,6 +332,92 @@ class TestTransformStage:
         assert len(enriched_emails) == 0
 
 
+class TestTransformStageDomainShortcut:
+    """Known-sender domain_rules shortcut takes precedence over the LLM."""
+
+    def test_known_sender_shortcut_skips_llm(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.domain_rules = {"example.com": "Work"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        email = EmailRecord(
+            id="e1",
+            subject="Hi",
+            sender="boss@example.com",
+            content="body",
+            received_date="2024-01-01T10:00:00Z",
+        )
+
+        enriched = stage.execute([email], pipeline_context_no_test_mode)
+
+        assert len(enriched) == 1
+        assert enriched[0].category == "Work"
+        assert enriched[0].explanation == "known sender: example.com"
+        llm_service.categorize_email.assert_not_called()
+
+    def test_unknown_sender_still_calls_llm(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.domain_rules = {"example.com": "Work"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        email = EmailRecord(
+            id="e1",
+            subject="Hi",
+            sender="friend@other.com",
+            content="body",
+            received_date="2024-01-01T10:00:00Z",
+        )
+
+        enriched = stage.execute([email], pipeline_context_no_test_mode)
+
+        assert len(enriched) == 1
+        llm_service.categorize_email.assert_called_once()
+
+    def test_domain_rule_category_not_in_categories_falls_through_to_llm(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """A domain_rules value that isn't a configured category is not applied; the LLM decides instead."""
+        pipeline_config.transform.domain_rules = {"example.com": "NotARealCategory"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        email = EmailRecord(
+            id="e1",
+            subject="Hi",
+            sender="boss@example.com",
+            content="body",
+            received_date="2024-01-01T10:00:00Z",
+        )
+
+        enriched = stage.execute([email], pipeline_context_no_test_mode)
+
+        llm_service.categorize_email.assert_called_once()
+        assert enriched[0].category == "Work"  # from the llm_service fixture's default return value
+
+    def test_domain_shortcut_metrics_tracked(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.domain_rules = {"example.com": "Work"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        emails = [
+            EmailRecord(
+                id="e1", subject="Hi", sender="boss@example.com",
+                content="b", received_date="2024-01-01T10:00:00Z",
+            ),
+            EmailRecord(
+                id="e2", subject="Hi", sender="x@other.com",
+                content="b", received_date="2024-01-01T10:00:00Z",
+            ),
+        ]
+
+        stage.execute(emails, pipeline_context_no_test_mode)
+
+        assert pipeline_context_no_test_mode.metrics["transform_domain_shortcut"] == 1
+        assert pipeline_context_no_test_mode.metrics["transform_llm_calls"] == 1
+
+
 class TestLoadStage:
     """Test cases for LoadStage."""
 

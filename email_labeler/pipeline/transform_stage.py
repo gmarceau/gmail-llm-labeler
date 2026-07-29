@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, List, Optional
 from ..progress import SmartBar
 from ..email_processor import EmailProcessor
+from ..gmail_utils import extract_domain
 from ..llm_service import LLMService
 from .base import EmailRecord, EnrichedEmailRecord, PipelineContext, PipelineStage
 from .config import TransformConfig
@@ -115,6 +116,20 @@ class TransformStage(PipelineStage):
     ) -> EnrichedEmailRecord:
         """Categorize a single email."""
         start_time = time.time()
+
+        # Known-sender shortcut: domain_rules takes precedence over the LLM.
+        domain = extract_domain(email.sender)
+        rule_category = self.config.domain_rules.get(domain)
+        if rule_category and rule_category in self.config.categories:
+            context.increment_metric("transform_domain_shortcut")
+            return EnrichedEmailRecord(
+                **email.__dict__,
+                category=rule_category,
+                explanation=f"known sender: {domain}",
+                confidence=1.0,
+                processing_time=time.time() - start_time,
+            )
+        context.increment_metric("transform_llm_calls")
 
         # Prepare content
         clean_content = self.email_processor.strip_html(email.content)
