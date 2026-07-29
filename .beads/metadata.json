@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "gmail_llm_labeler",
+  "project_id": "0af489e2-470a-42f8-bd2f-d3b7618394da"
+}
