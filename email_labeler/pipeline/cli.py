@@ -12,7 +12,7 @@ import yaml
 
 from ..config import PathConfig
 from ..database import EmailDatabase
-from ..gmail_utils import extract_domain
+from ..gmail_utils import extract_address, extract_domain
 from .config import PipelineConfig
 from .orchestrator import EmailPipeline
 
@@ -142,7 +142,7 @@ Examples:
     )
     dump_parser.add_argument(
         "--config", "-c", type=str, default="config_production_7b.yaml",
-        help="Path to configuration YAML file (used for DB path and existing domain_rules)",
+        help="Path to configuration YAML file (used for DB path and existing sender_rules)",
     )
 
     return parser
@@ -345,7 +345,11 @@ def show_metrics(args):
 def dump_domains(args):
     """Output per-domain analysis of cached email metadata as YAML."""
     config = PipelineConfig.from_yaml(args.config) if args.config else PipelineConfig.from_env()
-    existing_domains = set(getattr(config.transform, "domain_rules", {}).keys())
+    # sender_rules keys mix full addresses (recruiter@gmail.com) and bare domains
+    # (substack.com); a sender is already covered if either its address or domain has a rule.
+    rule_keys = set(getattr(config.transform, "sender_rules", {}).keys())
+    known_addresses = {k for k in rule_keys if "@" in k}
+    known_domains = rule_keys - known_addresses
 
     path_config = PathConfig(config_file=args.config)
     db = EmailDatabase(database_file=str(path_config.database_file))
@@ -354,6 +358,7 @@ def dump_domains(args):
     flat = [
         {
             "domain": _extract_domain(sender),
+            "address": extract_address(sender),
             "subject": subject or "",
             "headers": json.loads(headers_json) if headers_json else {},
             "has_unsubscribe": bool(has_unsubscribe),
@@ -361,7 +366,12 @@ def dump_domains(args):
         for _, subject, sender, headers_json, has_unsubscribe in rows
         if sender
     ]
-    filtered = [r for r in flat if r["domain"] and r["domain"] not in existing_domains]
+    filtered = [
+        r for r in flat
+        if r["domain"]
+        and r["domain"] not in known_domains
+        and r["address"] not in known_addresses
+    ]
 
     grouped = pydash.group_by(filtered, "domain")
     result = [

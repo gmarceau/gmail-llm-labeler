@@ -61,7 +61,7 @@ class TestDumpDomains:
         with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
              patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
              patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db):
-            mock_cfg.return_value.transform.domain_rules = {}
+            mock_cfg.return_value.transform.sender_rules = {}
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
             result = dump_domains(self._args("fake.yaml"))
@@ -84,7 +84,7 @@ class TestDumpDomains:
         with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
              patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
              patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db):
-            mock_cfg.return_value.transform.domain_rules = {"substack.com": "newsletter"}
+            mock_cfg.return_value.transform.sender_rules = {"substack.com": "newsletter"}
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
             dump_domains(self._args("fake.yaml"))
@@ -93,6 +93,28 @@ class TestDumpDomains:
         domains = {e["domain"] for e in output}
         assert "substack.com" not in domains
         assert "amazon.com" in domains
+
+    def test_excludes_configured_address_but_keeps_domain_siblings(self, tmp_path, capsys):
+        """A full-address rule drops only that sender; other senders on the same domain stay."""
+        db = self._make_db_with_emails(tmp_path, [
+            ("e1", "Job opportunity", "recruiter@gmail.com", {}),
+            ("e2", "Re: dinner", "friend@gmail.com", {}),
+        ])
+
+        with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
+             patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
+             patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db):
+            mock_cfg.return_value.transform.sender_rules = {"recruiter@gmail.com": "marketing"}
+            mock_pc.return_value.database_file = tmp_path / "test.db"
+
+            dump_domains(self._args("fake.yaml"))
+
+        output = yaml.safe_load(capsys.readouterr().out)
+        gmail_entry = next(e for e in output if e["domain"] == "gmail.com")
+        # recruiter@gmail.com is covered by a rule and excluded; friend@gmail.com remains
+        assert gmail_entry["count"] == 1
+        subjects = {s["subject"] for s in gmail_entry["samples"]}
+        assert subjects == {"Re: dinner"}
 
     def test_sorted_by_count_descending(self, tmp_path, capsys):
         emails = (
@@ -106,7 +128,7 @@ class TestDumpDomains:
         with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
              patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
              patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db):
-            mock_cfg.return_value.transform.domain_rules = {}
+            mock_cfg.return_value.transform.sender_rules = {}
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
             dump_domains(self._args("fake.yaml"))
@@ -122,7 +144,7 @@ class TestDumpDomains:
         with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
              patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
              patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db):
-            mock_cfg.return_value.transform.domain_rules = {}
+            mock_cfg.return_value.transform.sender_rules = {}
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
             dump_domains(self._args("fake.yaml"))
@@ -141,7 +163,7 @@ class TestDumpDomains:
         with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
              patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
              patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db):
-            mock_cfg.return_value.transform.domain_rules = {}
+            mock_cfg.return_value.transform.sender_rules = {}
             mock_pc.return_value.database_file = tmp_path / "test.db"
 
             dump_domains(self._args("fake.yaml"))
@@ -160,7 +182,7 @@ class TestDumpDomains:
         with patch("email_labeler.pipeline.cli.PipelineConfig.from_yaml") as mock_cfg, \
              patch("email_labeler.pipeline.cli.PathConfig") as mock_pc, \
              patch("email_labeler.pipeline.cli.EmailDatabase", return_value=db):
-            mock_cfg.return_value.transform.domain_rules = {}
+            mock_cfg.return_value.transform.sender_rules = {}
             mock_pc.return_value.database_file = tmp_path / "test.db"
             dump_domains(self._args("fake.yaml"))
 

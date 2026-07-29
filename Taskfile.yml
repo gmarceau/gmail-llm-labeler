@@ -16,8 +16,8 @@ tasks:
 
   biweekly-review:
     desc: >
-      Surface sender domains not yet in domain_rules, grouped by count with header
-      samples, so you can decide their category and add them to CONFIG's domain_rules.
+      Surface sender domains not yet in sender_rules, grouped by count with header
+      samples, so you can decide their category and add them to CONFIG's sender_rules.
       Run every two weeks. Pass CONFIG to target a different file.
     cmds:
       - venv/bin/python -m email_labeler.pipeline.cli dump-domains --config {{.CONFIG}}

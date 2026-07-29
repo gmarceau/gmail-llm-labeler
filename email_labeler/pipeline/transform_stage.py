@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, List, Optional
 from ..progress import SmartBar
 from ..email_processor import EmailProcessor
-from ..gmail_utils import extract_domain, format_classification_headers
+from ..gmail_utils import extract_address, extract_domain, format_classification_headers
 from ..llm_service import LLMService
 from .base import EmailRecord, EnrichedEmailRecord, PipelineContext, PipelineStage
 from .config import TransformConfig
@@ -117,7 +117,7 @@ class TransformStage(PipelineStage):
         """Categorize a single email."""
         start_time = time.time()
 
-        shortcut = self._try_domain_shortcut(email, context, start_time)
+        shortcut = self._try_sender_shortcut(email, context, start_time)
         if shortcut is not None:
             return shortcut
         context.increment_metric("transform_llm_calls")
@@ -147,24 +147,36 @@ class TransformStage(PipelineStage):
             processing_time=processing_time,
         )
 
-    def _try_domain_shortcut(
+    def _try_sender_shortcut(
         self, email: EmailRecord, context: PipelineContext, start_time: float
     ) -> Optional[EnrichedEmailRecord]:
-        """Known-sender shortcut: domain_rules takes precedence over the LLM.
+        """Known-sender shortcut: sender_rules takes precedence over the LLM.
 
-        Returns None (falling through to the LLM) if the sender's domain has no rule,
-        or its mapped category isn't one of the configured categories.
+        A rule key may be a full sender address (recruiter@gmail.com) or a registered
+        domain (substack.com). The exact address is matched first, so a single sender on
+        a personal domain can be routed even when the domain itself has no rule (or a
+        different one).
+
+        Returns None (falling through to the LLM) if neither the sender's address nor its
+        domain has a rule, or the matched rule's category isn't a configured category. A
+        matched-but-invalid address rule does not fall back to the domain rule.
         """
-        domain = extract_domain(email.sender)
-        rule_category = self.config.domain_rules.get(domain)
-        if not rule_category or rule_category not in self.config.categories:
+        rules = self.config.sender_rules
+        for key in (extract_address(email.sender), extract_domain(email.sender)):
+            if key and key in rules:
+                rule_category = rules[key]
+                break
+        else:
             return None
 
-        context.increment_metric("transform_domain_shortcut")
+        if rule_category not in self.config.categories:
+            return None
+
+        context.increment_metric("transform_sender_shortcut")
         return EnrichedEmailRecord(
             **email.__dict__,
             category=rule_category,
-            explanation=f"known sender: {domain}",
+            explanation=f"known sender: {key}",
             confidence=1.0,
             processing_time=time.time() - start_time,
         )

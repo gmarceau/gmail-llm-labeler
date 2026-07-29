@@ -75,6 +75,18 @@ def format_classification_headers(headers: Dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def extract_address(sender: str) -> str:
+    """Extract the bare, lowercased email address from a From/Sender header value.
+
+    Returns "" when the header has no parseable address (used as the exact-match key
+    for sender_rules, which is checked before the domain-level fallback).
+    """
+    _, address = parseaddr(sender)
+    if not address or "@" not in address:
+        return ""
+    return address.lower()
+
+
 def extract_domain(sender: str) -> str:
     """Extract the registered domain from a From/Sender header value using tldextract."""
     _, address = parseaddr(sender)

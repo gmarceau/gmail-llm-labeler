@@ -40,8 +40,11 @@ pipeline:
       - "main"
 
     # Known senders skip the LLM entirely. Reviewed biweekly via `dump-domains`;
-    # a domain here takes precedence over everything below.
-    domain_rules:
+    # a rule here takes precedence over everything below. Keys may be a bare domain
+    # (matches every sender on it) or a full address (matches one sender — use this to
+    # route recruiter noise off a personal domain, e.g. someone@gmail.com: marketing).
+    # A full-address rule wins over a domain rule for the same sender.
+    sender_rules:
       substack.com: newsletter
       patreon.com: newsletter
       buttondown.email: newsletter

@@ -1,9 +1,27 @@
 """Tests for gmail_utils functions."""
 
 from email_labeler.gmail_utils import (
+    extract_address,
     extract_domain,
     format_classification_headers,
 )
+
+
+class TestExtractAddress:
+    def test_plain_address(self):
+        assert extract_address("alice@example.com") == "alice@example.com"
+
+    def test_display_name_angle_brackets(self):
+        assert extract_address("Alice Smith <alice@example.com>") == "alice@example.com"
+
+    def test_lowercased(self):
+        assert extract_address("Recruiter@Gmail.COM") == "recruiter@gmail.com"
+
+    def test_no_at_sign(self):
+        assert extract_address("nodomain") == ""
+
+    def test_empty_string(self):
+        assert extract_address("") == ""
 
 
 class TestExtractDomain:

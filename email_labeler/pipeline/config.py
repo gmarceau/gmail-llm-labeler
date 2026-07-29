@@ -45,7 +45,7 @@ class TransformConfig:
     )
     system_prompt: Optional[str] = None  # Custom system prompt (supports templating)
     user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
-    domain_rules: Dict[str, str] = field(default_factory=dict)  # registered domain -> category
+    sender_rules: Dict[str, str] = field(default_factory=dict)  # full address or registered domain -> category
     llm_body_mode: str = "none"  # Options: "none", "head", "full"
     llm_body_head_lines: int = 20  # used when llm_body_mode == "head"
 
@@ -189,7 +189,7 @@ class PipelineConfig:
                     "categories": self.transform.categories,
                     "system_prompt": self.transform.system_prompt,
                     "user_prompt": self.transform.user_prompt,
-                    "domain_rules": self.transform.domain_rules,
+                    "sender_rules": self.transform.sender_rules,
                     "llm_body_mode": self.transform.llm_body_mode,
                     "llm_body_head_lines": self.transform.llm_body_head_lines,
                 },
