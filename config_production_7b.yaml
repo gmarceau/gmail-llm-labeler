@@ -133,7 +133,6 @@ pipeline:
       newsletter: forums
       marketing: updates
       main: primary
-      cold-outreach: updates
 
     # cold-outreach gets its own label and is pulled out of the inbox entirely
     # (apply_label + archive), so recruiter/sales spam stops competing with real mail.

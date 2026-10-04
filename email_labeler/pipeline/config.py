@@ -13,9 +13,12 @@ from typing import Dict, List, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ..config import PathsConfig
+
 
 class ConfigError(ValueError):
-    """Raised when a pipeline config file is missing, malformed, or has unknown keys."""
+    """Raised when a pipeline config file is missing, malformed, or has unknown keys
+    or invalid values (e.g. sender rules whose values are not configured categories)."""
 
 
 class ExtractConfig(BaseModel):
@@ -48,7 +51,10 @@ class EscalationConfig(BaseModel):
 class TransformConfig(BaseModel):
     """Configuration for the Transform stage."""
 
-    model_config = ConfigDict(extra="forbid")
+    # validate_assignment: from_yaml loads the external rules file into
+    # sender_rules/personal_domains AFTER construction; re-validating those
+    # assignments makes a wrongly-typed rules file fail at load, not at runtime.
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
     llm_service: str = "openai"  # Options: "openai", "ollama"
     model: str = "gpt-4o-mini"
     temperature: float = 0.0  # Sampling temperature; 0 for deterministic classification
@@ -136,20 +142,22 @@ class MonitoringConfig(BaseModel):
     enable_tracing: bool = False
 
 
-class PathsConfig(BaseModel):
-    """Top-level `paths:` block, consumed by email_labeler.config.PathConfig.
+class TopLevelConfig(BaseModel):
+    """Top level of a config file: a `pipeline:` mapping and a `paths:` block.
 
-    Validated here too so a typo in a path key fails fast at boot rather than
-    being silently ignored by PathConfig's ``yaml_paths.get(...)`` lookups.
+    Unknown top-level keys are rejected here (extra="forbid") and the `paths:`
+    block is validated by the nested PathsConfig model (owned by
+    email_labeler.config, beside its consumer PathConfig). The `pipeline`
+    mapping is validated next by PipelineConfig itself: its own
+    extra="forbid" rejects unknown pipeline keys, so no hand-maintained
+    allowlist of pipeline keys (which would have to track the model fields
+    in lockstep) is needed.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    database_file: Optional[str] = None
-    llm_log_file: Optional[str] = None
-    error_log_file: Optional[str] = None
-    test_output_file: Optional[str] = None
-    test_summary_file: Optional[str] = None
+    pipeline: Optional[dict] = None
+    paths: Optional[PathsConfig] = None
 
 
 class PipelineConfig(BaseModel):
@@ -170,11 +178,15 @@ class PipelineConfig(BaseModel):
     def from_yaml(cls, path: str) -> "PipelineConfig":
         """Load configuration from YAML file.
 
+        An empty file, or a missing/null `pipeline:` block, loads all defaults.
+
         Raises:
             ConfigError: if the file is missing/unreadable, or if it contains an
-                unknown/typo'd key or a wrongly-typed value. The message names the
-                config file and the offending field so a boot-time failure is
-                self-explanatory.
+                unknown/typo'd key, a wrongly-typed value (including in the external
+                sender-rules file), or a sender rule whose value is not a configured
+                category. The message names the config file (and the rules file, when
+                the offender came from it) and the offending field, so a boot-time
+                failure is self-explanatory.
         """
         try:
             with open(path) as f:
@@ -187,56 +199,29 @@ class PipelineConfig(BaseModel):
                 f"Config file {path!r} must contain a top-level mapping, got {type(data).__name__}"
             )
 
-        pipeline_data = data.get("pipeline", {})
-        if pipeline_data is None:
-            pipeline_data = {}
-        if not isinstance(pipeline_data, dict):
-            raise ConfigError(
-                f"'pipeline' in {path!r} must be a mapping, got {type(pipeline_data).__name__}"
-            )
-
-        unknown_top = set(data) - {"pipeline", "paths"}
-        if unknown_top:
-            raise ConfigError(
-                f"Unknown top-level key(s) in {path!r}: "
-                f"{', '.join(sorted(unknown_top))}. Expected only 'pipeline' and 'paths'."
-            )
-
-        # Build each nested config. Any unknown/typo'd key or wrong type raises a
-        # pydantic ValidationError, which we re-raise with the file path attached.
+        # The file's shape is declared by models: TopLevelConfig rejects unknown
+        # top-level keys and validates the `paths:` block, then PipelineConfig's own
+        # extra="forbid" rejects unknown keys under `pipeline`. A missing/null
+        # `pipeline:` block (or an empty file) loads all defaults, via `or {}`.
         try:
-            extract_config = ExtractConfig(**pipeline_data.get("extract", {}))
-            transform_config = TransformConfig(**pipeline_data.get("transform", {}))
-            load_config = LoadConfig(**pipeline_data.get("load", {}))
-            sync_config = SyncConfig(**pipeline_data.get("sync", {}))
-            monitoring_config = MonitoringConfig(**pipeline_data.get("monitoring", {}))
-            # `paths:` is consumed separately by PathConfig, but validate it here so a
-            # typo'd path key fails at boot instead of being silently ignored there.
-            PathsConfig(**(data.get("paths") or {}))
-            unknown_pipeline = set(pipeline_data) - {
-                "extract", "transform", "load", "sync", "monitoring",
-                "dry_run", "continue_on_error", "max_retries",
-            }
-            if unknown_pipeline:
-                raise ConfigError(
-                    f"Unknown key(s) under 'pipeline' in {path!r}: "
-                    f"{', '.join(sorted(unknown_pipeline))}."
-                )
+            top = TopLevelConfig(**data)
+            config = cls(**(top.pipeline or {}))
         except ValidationError as e:
             raise ConfigError(f"Invalid config in {path!r}:\n{e}") from e
 
         # An external sender-rules file (path relative to this config) is the source of
         # truth for sender_rules/personal_domains when present.
-        if transform_config.sender_rules_file:
+        rules_source = path  # where the effective sender_rules came from (for errors)
+        if config.transform.sender_rules_file:
             rules_path = os.path.join(
-                os.path.dirname(os.path.abspath(path)), transform_config.sender_rules_file
+                os.path.dirname(os.path.abspath(path)), config.transform.sender_rules_file
             )
             try:
                 with open(rules_path) as rf:
                     rules_data = yaml.safe_load(rf) or {}
             except OSError as e:
                 raise ConfigError(
-                    f"Could not read sender_rules_file {transform_config.sender_rules_file!r} "
+                    f"Could not read sender_rules_file {config.transform.sender_rules_file!r} "
                     f"(resolved to {rules_path!r}, from {path!r}): {e}"
                 ) from e
             if not isinstance(rules_data, dict):
@@ -250,22 +235,40 @@ class PipelineConfig(BaseModel):
                     f"{', '.join(sorted(unknown_rules))}. "
                     "Expected only 'sender_rules' and 'personal_domains'."
                 )
-            transform_config.sender_rules = rules_data.get("sender_rules") or {}
-            transform_config.personal_domains = rules_data.get("personal_domains") or []
+            # TransformConfig validates on assignment, so a sender_rules that is a
+            # list/string (or personal_domains as a dict/string) fails right here,
+            # named with the rules file. The `or {}`/`or []` keep empty values tolerated.
+            try:
+                config.transform.sender_rules = rules_data.get("sender_rules") or {}
+                config.transform.personal_domains = rules_data.get("personal_domains") or []
+            except ValidationError as e:
+                raise ConfigError(
+                    f"Invalid sender_rules_file {rules_path!r} (from {path!r}):\n{e}"
+                ) from e
+            rules_source = rules_path
 
-        try:
-            return cls(
-                extract=extract_config,
-                transform=transform_config,
-                load=load_config,
-                sync=sync_config,
-                monitoring=monitoring_config,
-                dry_run=pipeline_data.get("dry_run", False),
-                continue_on_error=pipeline_data.get("continue_on_error", True),
-                max_retries=pipeline_data.get("max_retries", 3),
+        # Every rule VALUE must be one of the configured categories, case-sensitively:
+        # the runtime sender-rule lookups are case-sensitive, so e.g. a capitalized
+        # "Marketing" against a lowercase "marketing" category would silently never
+        # match. List every offender so one load error shows the whole cleanup needed.
+        invalid_rules = sorted(
+            f"{sender}: {category}"
+            for sender, category in config.transform.sender_rules.items()
+            if category not in config.transform.categories
+        )
+        if invalid_rules:
+            source = (
+                f"{rules_source!r} (referenced from {path!r})"
+                if rules_source != path
+                else f"{rules_source!r}"
             )
-        except ValidationError as e:
-            raise ConfigError(f"Invalid config in {path!r}:\n{e}") from e
+            raise ConfigError(
+                f"Invalid sender_rules in {source}: rule values must be one of the "
+                f"configured categories {config.transform.categories} (case-sensitive). "
+                f"Offending rule(s):\n  " + "\n  ".join(invalid_rules)
+            )
+
+        return config
 
     @classmethod
     def from_env(cls) -> "PipelineConfig":
