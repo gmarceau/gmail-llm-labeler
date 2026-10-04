@@ -2,8 +2,7 @@
 
 import logging
 import re
-from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup
 from googleapiclient.discovery import Resource
@@ -84,8 +83,8 @@ class EmailProcessor:
 
     def fetch_emails_from_gmail(
         self, query: str = "is:unread", limit: Optional[int] = None, *, include_body: bool
-    ) -> List[tuple]:
-        """Fetch emails directly from Gmail API and convert to database format.
+    ) -> List[Dict[str, Any]]:
+        """Fetch emails from Gmail and return their get_email_content() dicts as-is.
 
         Args:
             query: Gmail search query.
@@ -95,6 +94,12 @@ class EmailProcessor:
                 transform stage classifies from headers alone (llm_body_mode=none),
                 saving bandwidth and latency; categorization still works because the
                 classification headers are captured either way.
+
+        Returns:
+            One get_email_content() dict per fetched email, unchanged: id, subject,
+            from, date, headers, has_unsubscribe, and body (present only for full
+            downloads). Emails that fail to fetch are logged and skipped, so one
+            bad email never aborts the batch.
         """
         self._ensure_gmail_client()
         messages = fetch_emails(self.gmail, query, max_results=limit)
@@ -108,18 +113,7 @@ class EmailProcessor:
         emails_data = []
         for msg in messages:
             try:
-                email_data = get_email_content(self.gmail, msg["id"], **fetch_kwargs)
-                # Convert to tuple format matching database structure
-                emails_data.append(
-                    (
-                        msg["id"],
-                        email_data.get("subject", ""),
-                        email_data.get("from", ""),
-                        email_data.get("date", datetime.now().isoformat()),
-                        email_data.get("body", ""),
-                        email_data.get("headers", {}),
-                    )
-                )
+                emails_data.append(get_email_content(self.gmail, msg["id"], **fetch_kwargs))
             except Exception as e:
                 logging.error(f"Failed to fetch email {msg['id']}: {e}")
                 continue

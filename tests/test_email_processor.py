@@ -65,10 +65,13 @@ class TestEmailProcessor:
         # Mock the get_email_content function
         def mock_get_content_side_effect(gmail, email_id, **kwargs):
             return {
+                "id": email_id,
                 "subject": f"Subject {email_id}",
                 "from": f"sender{email_id}@example.com",
                 "date": "2024-01-01T12:00:00Z",
                 "body": f"Body content for {email_id}",
+                "headers": {},
+                "has_unsubscribe": False,
             }
 
         mock_get_email_content.side_effect = mock_get_content_side_effect
@@ -76,10 +79,10 @@ class TestEmailProcessor:
         emails = processor.fetch_emails_from_gmail(query="is:unread", limit=10, include_body=True)
 
         assert len(emails) == 2
-        assert emails[0][0] == "msg1"
-        assert emails[0][1] == "Subject msg1"
-        assert emails[0][2] == "sendermsg1@example.com"
-        assert emails[1][0] == "msg2"
+        assert emails[0]["id"] == "msg1"
+        assert emails[0]["subject"] == "Subject msg1"
+        assert emails[0]["from"] == "sendermsg1@example.com"
+        assert emails[1]["id"] == "msg2"
 
         mock_fetch_emails.assert_called_once_with(mock_gmail_client, "is:unread", max_results=10)
 
@@ -102,10 +105,13 @@ class TestEmailProcessor:
             if email_id == "msg2":
                 raise Exception("Failed to fetch email")
             return {
+                "id": email_id,
                 "subject": f"Subject {email_id}",
                 "from": f"sender{email_id}@example.com",
                 "date": "2024-01-01T12:00:00Z",
                 "body": f"Body content for {email_id}",
+                "headers": {},
+                "has_unsubscribe": False,
             }
 
         mock_get_email_content.side_effect = mock_get_content_side_effect
@@ -114,7 +120,7 @@ class TestEmailProcessor:
 
         # Should only return the first email since second failed
         assert len(emails) == 1
-        assert emails[0][0] == "msg1"
+        assert emails[0]["id"] == "msg1"
 
     @patch("email_labeler.email_processor.fetch_emails")
     @patch("email_labeler.email_processor.get_email_content")
