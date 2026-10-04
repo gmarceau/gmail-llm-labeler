@@ -80,15 +80,14 @@ class ExtractStage(PipelineStage):
         )
 
         emails = []
-        for email_id, subject, sender, date, content, headers in raw_emails:
+        for email_data in raw_emails:
             try:
-                has_unsubscribe = "unsubscribe" in (content or "").lower()
-                email = self._normalize_email(
-                    email_id, subject, sender, date, content,
-                    headers=headers, has_unsubscribe=has_unsubscribe,
-                )
+                email = self._normalize_email(email_data)
                 if not context.dry_run:
-                    self.database.save_email(email.id, email.subject, email.sender, email.received_date, "", headers, has_unsubscribe)
+                    self.database.save_email(
+                        email.id, email.subject, email.sender, email.received_date,
+                        "", email.headers, email.has_unsubscribe,
+                    )
                 emails.append(email)
             except Exception as e:
                 logger.warning(f"Failed to normalize email: {e}")
@@ -121,8 +120,15 @@ class ExtractStage(PipelineStage):
                 email_id, subject, sender, date, content, headers_json, has_unsubscribe = raw_email
                 headers = json.loads(headers_json) if headers_json else {}
                 email = self._normalize_email(
-                    email_id, subject, sender, date, content,
-                    headers=headers, has_unsubscribe=bool(has_unsubscribe),
+                    {
+                        "id": email_id,
+                        "subject": subject,
+                        "from": sender,
+                        "date": date,
+                        "body": content,
+                        "headers": headers,
+                        "has_unsubscribe": bool(has_unsubscribe),
+                    }
                 )
                 emails.append(email)
             except Exception as e:
@@ -133,17 +139,17 @@ class ExtractStage(PipelineStage):
 
         return emails
 
-    def _normalize_email(
-        self,
-        email_id: str,
-        subject: str,
-        sender: str,
-        date,
-        content: str,
-        headers: Optional[Dict[str, str]] = None,
-        has_unsubscribe: bool = False,
-    ) -> EmailRecord:
-        """Convert raw email fields to EmailRecord."""
+    def _normalize_email(self, email_data: Dict[str, Any]) -> EmailRecord:
+        """Convert a fetched email dict into an EmailRecord.
+
+        Both sources normalize through this single path: the gmail source passes
+        the get_email_content() dicts straight through, and the database source
+        re-shapes its rows into the same keys. has_unsubscribe is taken from the
+        source (gmail: computed by get_email_content from the List-Unsubscribe
+        header or body; database: the stored row column) — never recomputed from
+        content, which is empty for header-only fetches.
+        """
+        date = email_data.get("date")
         if isinstance(date, datetime):
             date = date.isoformat()
         elif date is None:
@@ -152,13 +158,13 @@ class ExtractStage(PipelineStage):
             date = str(date)
 
         return EmailRecord(
-            id=email_id,
-            subject=subject or "",
-            sender=sender or "",
-            content=content or "",
+            id=email_data["id"],
+            subject=email_data.get("subject") or "",
+            sender=email_data.get("from") or "",
+            content=email_data.get("body") or "",
             received_date=date,
-            headers=headers or {},
-            has_unsubscribe=has_unsubscribe,
+            headers=email_data.get("headers") or {},
+            has_unsubscribe=bool(email_data["has_unsubscribe"]),
         )
 
     def validate_input(self, input_data: Any) -> bool:

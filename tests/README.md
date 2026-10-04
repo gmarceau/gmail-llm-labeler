@@ -10,10 +10,8 @@ tests/
 ├── test_database.py              # EmailDatabase class tests
 ├── test_email_processor.py       # EmailProcessor class tests  
 ├── test_llm_service.py           # LLMService class tests
-├── test_labeler.py               # EmailAutoLabeler class tests
 ├── test_pipeline_stages.py       # Pipeline stage tests
 ├── test_pipeline_orchestrator.py # Pipeline orchestrator tests
-├── test_factory.py               # Factory function tests
 ├── test_cli.py                   # CLI argument parsing and execution tests
 └── README.md                     # This file
 ```
@@ -98,7 +96,6 @@ The test suite aims for comprehensive coverage of:
 - **EmailDatabase**: Database operations, connection management, data persistence
 - **EmailProcessor**: Gmail API operations, email retrieval, label management
 - **LLMService**: Email categorization, both OpenAI and Ollama backends
-- **EmailAutoLabeler**: Main orchestration logic, email processing workflows
 
 ### Pipeline Components
 - **ExtractStage**: Email extraction from Gmail API
@@ -107,8 +104,7 @@ The test suite aims for comprehensive coverage of:
 - **SyncStage**: Label synchronization with Gmail
 - **EmailPipeline**: Orchestration, error handling, metrics collection
 
-### Factory and CLI
-- **Factory Functions**: Dependency injection, component creation
+### CLI
 - **CLI**: Argument parsing, execution modes, error handling
 
 ## Test Patterns and Best Practices
@@ -168,7 +164,7 @@ The `conftest.py` file provides shared fixtures:
 - **API client fixtures**: `mock_gmail_client`, `mock_openai_client`
 - **Data fixtures**: `sample_email_records`, `sample_enriched_email_records`
 - **Configuration fixtures**: `pipeline_config`, `pipeline_context`
-- **Component fixtures**: `llm_service`, `email_processor`, `email_auto_labeler`
+- **Component fixtures**: `llm_service`, `email_processor`
 
 ## Test Data
 

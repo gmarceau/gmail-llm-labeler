@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from email_labeler.email_processor import EmailProcessor
 from email_labeler.llm_service import LLMCategorizationError
 from email_labeler.pipeline.base import (
     ActionResult,
@@ -65,8 +66,24 @@ class TestExtractStage:
 
         # Mock email processor to return test emails
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1", {}),
-            ("msg2", "Subject 2", "sender2@example.com", "2024-01-01T10:00:00Z", "Content 2", {}),
+            {
+                "id": "msg1",
+                "subject": "Subject 1",
+                "from": "sender1@example.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Content 1",
+                "headers": {},
+                "has_unsubscribe": False,
+            },
+            {
+                "id": "msg2",
+                "subject": "Subject 2",
+                "from": "sender2@example.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Content 2",
+                "headers": {},
+                "has_unsubscribe": False,
+            },
         ]
 
         emails = stage.execute(None, pipeline_context)
@@ -84,8 +101,24 @@ class TestExtractStage:
 
         # Mock email processor to return test emails
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1", {}),
-            ("msg2", "Subject 2", "sender2@example.com", "2024-01-01T10:00:00Z", "Content 2", {}),
+            {
+                "id": "msg1",
+                "subject": "Subject 1",
+                "from": "sender1@example.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Content 1",
+                "headers": {},
+                "has_unsubscribe": False,
+            },
+            {
+                "id": "msg2",
+                "subject": "Subject 2",
+                "from": "sender2@example.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Content 2",
+                "headers": {},
+                "has_unsubscribe": False,
+            },
         ]
 
         emails = stage.execute(None, pipeline_context)
@@ -128,9 +161,17 @@ class TestExtractStage:
         """Test batch processing of emails."""
         stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
 
-        # Create large number of email tuples
+        # Create large number of fetched email dicts
         test_emails = [
-            (f"msg{i}", f"Subject {i}", f"sender{i}@example.com", "2024-01-01T10:00:00Z", f"Content {i}", {})
+            {
+                "id": f"msg{i}",
+                "subject": f"Subject {i}",
+                "from": f"sender{i}@example.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": f"Content {i}",
+                "headers": {},
+                "has_unsubscribe": False,
+            }
             for i in range(25)
         ]
         mock_email_processor.fetch_emails_from_gmail.return_value = test_emails
@@ -160,7 +201,15 @@ class TestExtractStage:
         """Extracted emails are persisted to DB without body content."""
         stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Body", {}),
+            {
+                "id": "msg1",
+                "subject": "Subject 1",
+                "from": "sender1@example.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Body",
+                "headers": {},
+                "has_unsubscribe": False,
+            },
         ]
         email_database.save_email = MagicMock()
 
@@ -173,11 +222,19 @@ class TestExtractStage:
     def test_save_email_includes_headers(
         self, mock_email_processor, email_database, pipeline_config, pipeline_context
     ):
-        """Headers from the 6th tuple element are forwarded to save_email."""
+        """Classification headers from the fetched email dict are forwarded to save_email."""
         stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
         headers = {"list-unsubscribe": "<https://example.com/unsub>", "reply-to": "noreply@x.com"}
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z", "Body", headers),
+            {
+                "id": "msg1",
+                "subject": "Weekly",
+                "from": "news@substack.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Body",
+                "headers": headers,
+                "has_unsubscribe": False,
+            },
         ]
         email_database.save_email = MagicMock()
 
@@ -190,10 +247,18 @@ class TestExtractStage:
     def test_save_email_empty_headers(
         self, mock_email_processor, email_database, pipeline_config, pipeline_context
     ):
-        """Tuples with an empty headers dict save correctly."""
+        """Fetched emails with an empty headers dict save correctly."""
         stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Subject", "a@b.com", "2024-01-01T10:00:00Z", "Body", {}),
+            {
+                "id": "msg1",
+                "subject": "Subject",
+                "from": "a@b.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Body",
+                "headers": {},
+                "has_unsubscribe": False,
+            },
         ]
         email_database.save_email = MagicMock()
 
@@ -210,8 +275,15 @@ class TestExtractStage:
         stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
         headers = {"list-unsubscribe": "<https://example.com/unsub>"}
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Weekly", "news@substack.com", "2024-01-01T10:00:00Z",
-             "Click here to Unsubscribe.", headers),
+            {
+                "id": "msg1",
+                "subject": "Weekly",
+                "from": "news@substack.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Click here to Unsubscribe.",
+                "headers": headers,
+                "has_unsubscribe": True,
+            },
         ]
 
         emails = stage.execute(None, pipeline_context)
@@ -236,14 +308,25 @@ class TestExtractStage:
         assert emails[0].headers == {"list-unsubscribe": "<https://example.com/unsub>"}
         assert emails[0].has_unsubscribe is True
 
-    def test_save_email_detects_unsubscribe_in_body(
+    def test_save_email_uses_source_has_unsubscribe(
         self, mock_email_processor, email_database, pipeline_config, pipeline_context
     ):
-        """has_unsubscribe is True when body contains the word 'unsubscribe'."""
+        """has_unsubscribe is stored as-is from the source, not recomputed from content.
+
+        A header-only fetch has empty content, yet the source flag (computed by
+        get_email_content from the List-Unsubscribe header) must still be saved.
+        """
         stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "News", "news@sub.com", "2024-01-01T10:00:00Z",
-             "Click here to Unsubscribe from this list.", {}),
+            {
+                "id": "msg1",
+                "subject": "News",
+                "from": "news@sub.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "",
+                "headers": {},
+                "has_unsubscribe": True,
+            },
         ]
         email_database.save_email = MagicMock()
 
@@ -259,7 +342,15 @@ class TestExtractStage:
         """DRY RUN still fetches real emails so they can be categorized, but writes nothing."""
         stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
         mock_email_processor.fetch_emails_from_gmail.return_value = [
-            ("msg1", "Subject 1", "sender1@example.com", "2024-01-01T10:00:00Z", "Content 1", {}),
+            {
+                "id": "msg1",
+                "subject": "Subject 1",
+                "from": "sender1@example.com",
+                "date": "2024-01-01T10:00:00Z",
+                "body": "Content 1",
+                "headers": {},
+                "has_unsubscribe": False,
+            },
         ]
         email_database.save_email = MagicMock()
         dry_run_context = PipelineContext.create(config=pipeline_config, dry_run=True)
@@ -285,6 +376,60 @@ class TestExtractStage:
 
         assert len(emails) == 1
         assert emails[0].id == "msg1"
+
+    def test_metadata_fetch_unsubscribe_header_sets_has_unsubscribe(
+        self, mock_gmail_client, email_database, pipeline_config
+    ):
+        """Acceptance: a metadata-format gmail fetch of an email with a List-Unsubscribe
+        header yields has_unsubscribe=True on the EmailRecord and in the
+        database.save_email call — no body downloaded, nothing recomputed from content.
+
+        This exercises the real EmailProcessor and get_email_content against a mocked
+        Gmail API, with llm_body_mode=none (header-only classification).
+        """
+        pipeline_config.transform.llm_body_mode = "none"
+        pipeline_config.transform.escalation.enabled = False
+        processor = EmailProcessor(gmail_client=mock_gmail_client)
+        stage = ExtractStage(pipeline_config.extract, processor, email_database)
+        email_database.save_email = MagicMock()
+
+        # One Gmail message whose only unsubscribe signal is the List-Unsubscribe header.
+        mock_gmail_client.users().messages().list.return_value.execute.return_value = {
+            "messages": [{"id": "msg1", "threadId": "thread1"}]
+        }
+        mock_gmail_client.users().messages().get.return_value.execute.return_value = {
+            "id": "msg1",
+            "snippet": "Weekly digest",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "news@substack.com"},
+                    {"name": "Subject", "value": "Weekly"},
+                    {"name": "Date", "value": "Mon, 01 Jan 2024 12:00:00 +0000"},
+                    {"name": "List-Unsubscribe", "value": "<https://example.com/unsub>"},
+                ]
+            },
+        }
+
+        emails = stage.execute(
+            None, PipelineContext.create(config=pipeline_config, dry_run=False, test_mode=True)
+        )
+
+        # The fetch was header-only (metadata format), so no body was downloaded.
+        _, kwargs = mock_gmail_client.users().messages().get.call_args
+        assert kwargs["format"] == "metadata"
+
+        assert len(emails) == 1
+        assert emails[0].has_unsubscribe is True
+        assert emails[0].content == ""
+        email_database.save_email.assert_called_once_with(
+            "msg1",
+            "Weekly",
+            "news@substack.com",
+            "Mon, 01 Jan 2024 12:00:00 +0000",
+            "",
+            {"list-unsubscribe": "<https://example.com/unsub>"},
+            True,
+        )
 
 
 class TestTransformStage:
