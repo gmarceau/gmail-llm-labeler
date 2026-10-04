@@ -253,6 +253,41 @@ class TestConfigValidation:
         assert len(loaded.transform.sender_rules) > 0
 
 
+class TestFromYamlTolerance:
+    """Only unknown keys are fatal; a missing/empty pipeline block means defaults."""
+
+    def test_empty_file_gives_defaults(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("")
+
+        loaded = PipelineConfig.from_yaml(str(path))
+
+        assert loaded.dry_run is False
+        assert loaded.transform.model == "gpt-4o-mini"
+        assert loaded.transform.sender_rules == {}
+
+    def test_missing_pipeline_block_gives_defaults(self, tmp_path):
+        """A file with only a `paths:` block (no `pipeline:`) still loads."""
+        path = tmp_path / "config.yaml"
+        path.write_text("paths:\n  database_file: /tmp/x.db\n")
+
+        loaded = PipelineConfig.from_yaml(str(path))
+
+        assert loaded.dry_run is False
+        assert loaded.extract.source == "gmail"
+        assert loaded.transform.llm_body_mode == "none"
+
+    def test_null_pipeline_block_gives_defaults(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("pipeline:\n")
+
+        loaded = PipelineConfig.from_yaml(str(path))
+
+        assert loaded.dry_run is False
+        assert loaded.continue_on_error is True
+        assert loaded.max_retries == 3
+
+
 class TestSenderRulesFileTypes:
     """A wrongly-typed rules file fails at from_yaml, not silently at runtime."""
 
