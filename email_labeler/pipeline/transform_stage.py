@@ -144,6 +144,9 @@ class TransformStage(PipelineStage):
             # Tiered escalation: a header-only "main" for an unruled company-domain
             # sender is exactly the recruiter/cold-mail leak — re-classify once with
             # the body head, where the tell-tale cues live. Max one extra pass.
+            # "main" is the production personal-correspondence category name —
+            # hardcoded by design: this gate is coupled to the configured category
+            # naming, so renaming the category means updating this trigger too.
             if category == "main" and self._should_escalate(email):
                 context.increment_metric("transform_escalation_second_pass")
                 escalated_content = self._build_email_content(
@@ -242,22 +245,42 @@ class TransformStage(PipelineStage):
             email_content += f"\n\n{body}"
         return email_content
 
+    def _is_ruled_or_personal_sender(self, email: EmailRecord) -> bool:
+        """Whether the user has already made a judgment about this sender: a
+        personal/freemail domain match, or a sender_rules entry for its exact
+        address or its registered domain.
+
+        Shared by the escalation and signals gates — the two copies of this
+        check once drifted apart, so there is exactly one now.
+        """
+        domain = extract_domain(email.sender)
+        return (
+            domain in self.config.personal_domains
+            or domain in self.config.sender_rules
+            or extract_address(email.sender) in self.config.sender_rules
+        )
+
     def _should_escalate(self, email: EmailRecord) -> bool:
         """Whether a header-only `main` verdict warrants a body-head second pass.
 
         Only for an unruled company-domain sender: sender-rule shortcut hits never
         reach the LLM, and freemail/personal senders are legitimately personal, so
-        neither is escalated. Requires a body to escalate.
+        neither is escalated. Requires a body with actual text to escalate.
         """
         if not self.config.escalation.enabled:
             return False
-        if not email.content.strip():
+        # Header-only mode only: in head/full the first pass already saw MORE
+        # body than the 10-line escalation pass, so a second pass adds no
+        # information and can only flip verdicts on less context.
+        if self.config.llm_body_mode != "none":
             return False
         domain = extract_domain(email.sender)
-        if not domain or domain in self.config.personal_domains:
+        if not domain or self._is_ruled_or_personal_sender(email):
             return False
-        rules = self.config.sender_rules
-        if domain in rules or (extract_address(email.sender) in rules):
+        # Gate on the text the LLM would see, not the raw bytes: a body that is
+        # only HTML markup (or whitespace) strips to nothing, and the escalated
+        # pass would repeat the identical header-only input at temperature 0.
+        if not self.email_processor.strip_html(email.content).strip():
             return False
         return True
 
@@ -276,12 +299,7 @@ class TransformStage(PipelineStage):
         domain), re-deriving "no known-sender rule" / "company domain" facts about
         it is noise at best and contradictory at worst.
         """
-        rules = self.config.sender_rules
-        if (
-            extract_domain(email.sender) in self.config.personal_domains
-            or extract_domain(email.sender) in rules
-            or extract_address(email.sender) in rules
-        ):
+        if self._is_ruled_or_personal_sender(email):
             return ""
         signals = compute_sender_signals(
             sender=email.sender,

@@ -613,7 +613,6 @@ class TestTransformStageSenderShortcut:
         self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
     ):
         """A cold-outreach rule is inert unless the category is configured."""
-        pipeline_config.transform.categories.remove("Marketing") if "Marketing" in pipeline_config.transform.categories else None
         pipeline_config.transform.sender_rules = {"ovise.com": "cold-outreach"}
         stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
 
@@ -901,6 +900,8 @@ class TestTransformStageEscalation:
         pipeline_config.transform.personal_domains = ["gmail.com"]
         pipeline_config.transform.sender_rules = {}
         pipeline_config.transform.escalation.enabled = True
+        # The body gate checks HTML-stripped text; identity keeps "   " empty.
+        mock_email_processor.strip_html.side_effect = lambda c: c
         llm_service.categorize_email.return_value = ("main", "personal")
         stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
 
@@ -910,6 +911,55 @@ class TestTransformStageEscalation:
 
         assert enriched[0].category == "main"
         assert llm_service.categorize_email.call_count == 1
+        assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
+
+    @pytest.mark.parametrize("mode", ["head", "full"])
+    def test_no_escalation_when_first_pass_already_saw_body(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode, mode
+    ):
+        """Escalation is a header-only-mode device: in head/full the first pass
+        already saw MORE body than the 10-line escalation pass, so a second
+        pass adds no information and can only flip verdicts on less context."""
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.llm_body_mode = mode
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        pipeline_config.transform.escalation.body_head_lines = 3
+        mock_email_processor.strip_html.side_effect = lambda c: c
+        llm_service.categorize_email.return_value = ("main", "personal")
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "main"
+        # The first pass classified with the body already in view.
+        first_content = llm_service.categorize_email.call_args[0][0]
+        assert "We are a Series A stealth startup" in first_content
+        assert llm_service.categorize_email.call_count == 1
+        assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
+
+    def test_no_escalation_when_body_strips_to_nothing(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """A body that is only HTML markup (no text) strips to empty: the
+        escalated pass would repeat the identical header-only input at temp 0."""
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        mock_email_processor.strip_html.side_effect = lambda c: ""
+        llm_service.categorize_email.return_value = ("main", "personal")
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute(
+            [self._email(content="<html><body><div></div></body></html>")],
+            pipeline_context_no_test_mode,
+        )
+
+        assert enriched[0].category == "main"
+        assert llm_service.categorize_email.call_count == 1
+        assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
 
     def test_at_most_one_escalation_per_email(
         self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
