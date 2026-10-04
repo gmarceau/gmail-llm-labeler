@@ -119,27 +119,9 @@ class TestComputeSenderSignals:
             sender="Danny Tomkins <danny@ovise.com>",
             subject="An opportunity that made me think of you",
             headers={},
-            sender_rules={},
-            personal_domains=["gmail.com", "hotmail.com"],
         )
         defaults.update(overrides)
         return compute_sender_signals(**defaults)
-
-    def test_company_domain_is_flagged(self):
-        signals = self._signals()
-        assert any("company domain" in s for s in signals)
-
-    def test_freemail_sender_flagged_as_personal(self):
-        signals = self._signals(sender="Jake Miles <jacob.miles@gmail.com>")
-        assert any("personal/freemail" in s for s in signals)
-        assert not any("company domain" in s for s in signals)
-
-    def test_domain_absent_from_rules_flagged(self):
-        assert any("no known-sender rule" in s for s in self._signals())
-
-    def test_known_domain_not_flagged_as_unruled(self):
-        signals = self._signals(sender_rules={"ovise.com": "cold-outreach"})
-        assert not any("no known-sender rule" in s for s in signals)
 
     def test_domain_lexicon_hit(self):
         signals = self._signals(sender="A <recruiter@get-rockstar-hiring-ai.com>")
@@ -169,17 +151,31 @@ class TestComputeSenderSignals:
             assert not any("recruiting/GTM words" in s for s in signals)
             assert not any("outreach phrases" in s for s in signals)
 
-    def test_return_path_plus_bounce(self):
+    def test_return_path_plus_tag_verp(self):
         signals = self._signals(
             headers={"return-path": "<chris+bounce@sterlingstrand.com>"}
         )
-        assert any("plus-tag" in s for s in signals)
+        hit = [s for s in signals if "plus-tag" in s]
+        assert hit and "VERP" in hit[0]
 
     def test_return_path_srs0_rewrite(self):
         signals = self._signals(
             headers={"return-path": "<SRS0=abc=de=gmarceau.qc.ca=danny@ovise.com>"}
         )
         assert any("SRS0=" in s for s in signals)
+
+    def test_return_path_srs1_rewrite(self):
+        # SRS1= is the second-hop rewrite of an already-forwarded message.
+        signals = self._signals(
+            headers={"return-path": "<SRS1=abc=de==xyz=ovise.com=danny@mailer.example.com>"}
+        )
+        assert any("SRS1=" in s for s in signals)
+
+    def test_null_return_path_flagged(self):
+        # <> is the null bounce sender — a strong bulk tell (automated send that
+        # expects bounces) that previously produced no signal at all.
+        signals = self._signals(headers={"return-path": "<>"})
+        assert any("null bounce sender" in s for s in signals)
 
     def test_return_path_domain_differs_from_from_domain(self):
         signals = self._signals(
@@ -209,29 +205,6 @@ class TestComputeSenderSignals:
     def test_reply_prefix_stripped_before_subject_match(self):
         signals = self._signals(subject="Re: Fwd: love your background!")
         assert any("love your background" in s for s in signals)
-
-    def test_personal_sender_with_no_outreach_markers(self):
-        # A freemail sender with a plain subject and a matching return-path produces
-        # no outreach markers (only structural domain facts).
-        signals = self._signals(
-            sender="Linnea <linnea@gmail.com>",
-            subject="dinner tonight?",
-            headers={"return-path": "<linnea@gmail.com>"},
-        )
-        assert any("personal/freemail" in s for s in signals)
-        assert not any("outreach phrases" in s for s in signals)
-        assert not any("plus-tag" in s for s in signals)
-        assert not any("differs from the From domain" in s for s in signals)
-        assert not any("recruiting/GTM words" in s for s in signals)
-
-    def test_known_personal_domain_not_flagged_as_unruled(self):
-        signals = self._signals(
-            sender="Linnea <linnea@gmail.com>",
-            subject="dinner tonight?",
-            headers={"return-path": "<linnea@gmail.com>"},
-            sender_rules={"gmail.com": "Personal"},
-        )
-        assert not any("no known-sender rule" in s for s in signals)
 
     def test_all_signals_are_strings(self):
         assert all(isinstance(s, str) for s in self._signals())
