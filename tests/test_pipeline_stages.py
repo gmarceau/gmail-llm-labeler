@@ -713,7 +713,7 @@ class TestTransformStageSignalsInjection:
 
         email_content = llm_service.categorize_email.call_args[0][0]
         assert "Signals (" in email_content
-        assert "company domain" in email_content
+        assert "outreach phrases" in email_content
         assert pipeline_context_no_test_mode.metrics["transform_signals_injected"] == 1
 
     def test_no_signals_for_freemail_sender(
@@ -781,6 +781,30 @@ class TestTransformStageSignalsInjection:
 
         email_content = llm_service.categorize_email.call_args[0][0]
         assert "Signals (" not in email_content
+        assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
+
+    def test_signals_metric_counts_injections_not_literal_text(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """transform_signals_injected counts real injected blocks — an email whose
+        subject literally contains 'Signals (' (and receives no block, here via a
+        freemail sender) must not increment the metric."""
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute(
+            [
+                self._email(
+                    subject="Signals (beta): your weekly digest is ready",
+                    sender="Jake Miles <jacob.miles@gmail.com>",
+                )
+            ],
+            pipeline_context_no_test_mode,
+        )
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "Signals (" in email_content  # from the subject itself, not a block
         assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
 
 

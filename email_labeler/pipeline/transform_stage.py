@@ -3,7 +3,7 @@
 import logging
 import time
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 from ..progress import SmartBar
 from ..email_processor import EmailProcessor
 from ..gmail_utils import (
@@ -130,8 +130,8 @@ class TransformStage(PipelineStage):
             return shortcut
         context.increment_metric("transform_llm_calls")
 
-        email_content = self._build_email_content(email)
-        if "Signals (" in email_content:
+        email_content, signals_injected = self._build_email_content(email)
+        if signals_injected:
             context.increment_metric("transform_signals_injected")
 
         if context.test_mode:
@@ -149,7 +149,10 @@ class TransformStage(PipelineStage):
             # naming, so renaming the category means updating this trigger too.
             if category == "main" and self._should_escalate(email):
                 context.increment_metric("transform_escalation_second_pass")
-                escalated_content = self._build_email_content(
+                # The second pass rebuilds content directly; its signals flag is
+                # discarded — the block is identical to the first pass's, and the
+                # metric counts one injection per email.
+                escalated_content, _ = self._build_email_content(
                     email,
                     body_mode="head",
                     body_head_lines=self.config.escalation.body_head_lines,
@@ -211,12 +214,16 @@ class TransformStage(PipelineStage):
         email: EmailRecord,
         body_mode: Optional[str] = None,
         body_head_lines: Optional[int] = None,
-    ) -> str:
+    ) -> Tuple[str, bool]:
         """Build the LLM input: header-first (no fixed rules — the LLM judges from
         headers directly), with body inclusion gated by llm_body_mode.
 
         For header-poor mail a compact "Signals:" block of deterministic facts is
         appended (advisory only — the LLM still judges). See _build_signals.
+
+        Returns (content, signals_injected): the flag is True when a Signals
+        block was appended — a real flag rather than text-sniffing, so literal
+        "Signals (" text in the email itself cannot fake a count.
 
         `body_mode`/`body_head_lines` override the configured llm_body_mode for a
         single call (used by escalation's second pass, which forces "head").
@@ -243,7 +250,7 @@ class TransformStage(PipelineStage):
 
         if body:
             email_content += f"\n\n{body}"
-        return email_content
+        return email_content, bool(signals_block)
 
     def _is_ruled_or_personal_sender(self, email: EmailRecord) -> bool:
         """Whether the user has already made a judgment about this sender: a
@@ -295,9 +302,9 @@ class TransformStage(PipelineStage):
         A sender the user has *already made a judgment about* is excluded too — an
         address or domain with any sender_rules entry, not just a personal_domains
         match. The signals exist to help the LLM on senders nobody has ruled on;
-        once a domain is ruled (e.g. repucci.org: main, an individual's own vanity
-        domain), re-deriving "no known-sender rule" / "company domain" facts about
-        it is noise at best and contradictory at worst.
+        injecting a block for a ruled sender (e.g. repucci.org: main, an
+        individual's own vanity domain) would contradict the prompt's statement
+        that the block only appears for unruled senders.
         """
         if self._is_ruled_or_personal_sender(email):
             return ""
@@ -305,8 +312,6 @@ class TransformStage(PipelineStage):
             sender=email.sender,
             subject=email.subject,
             headers=email.headers,
-            sender_rules=self.config.sender_rules,
-            personal_domains=self.config.personal_domains,
         )
         return format_signals_block(signals)
 

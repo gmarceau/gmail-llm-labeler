@@ -386,32 +386,23 @@ def compute_sender_signals(
     sender: str,
     subject: str,
     headers: Dict[str, str],
-    sender_rules: Dict[str, str],
-    personal_domains: List[str],
 ) -> List[str]:
     """Compute deterministic, advisory signals about a sender/subject.
 
     Returns a list of short human-readable fact strings (may be empty). These are
     the raw observations; ``format_signals_block`` renders them for the prompt.
     Pure function: no I/O, no config objects.
+
+    Sender gating (freemail and already-ruled senders never receive a block)
+    lives in TransformStage._build_signals, so "is a company domain" and "has no
+    sender rule" would be constants of every emitted block — the production
+    prompt states them once instead of repeating them here per email.
     """
     signals: List[str] = []
 
     sender_domain = extract_domain(sender)
-    is_freemail = bool(sender_domain) and sender_domain in personal_domains
 
-    # (1) Company domain vs personal/freemail.
-    if sender_domain:
-        if is_freemail:
-            signals.append(f"sender domain {sender_domain} is a personal/freemail domain")
-        else:
-            signals.append(f"sender domain {sender_domain} is a company domain (not a freemail address)")
-
-    # (2) Domain absent from known-sender rules.
-    if sender_domain and sender_domain not in sender_rules:
-        signals.append(f"sender domain {sender_domain} has no known-sender rule")
-
-    # (3) Domain-name lexicon hits.
+    # (1) Domain-name lexicon hits.
     if sender_domain:
         label = sender_domain.split(".")[0]
         hits = [word for word in _DOMAIN_LEXICON if word in label]
@@ -425,22 +416,31 @@ def compute_sender_signals(
         if hits:
             signals.append(f"sender domain name contains recruiting/GTM words: {', '.join(hits)}")
 
-    # (4) Return-path tells.
+    # (2) Return-path tells.
     return_path = headers.get("return-path", "")
     if return_path:
+        if return_path == "<>":
+            signals.append(
+                "return-path is <> (null bounce sender), typical of automated/bulk senders"
+            )
         rp_address = extract_address(return_path)
         local_part = rp_address.split("@")[0] if rp_address else ""
-        if "+bounce" in local_part or "+" in local_part:
-            signals.append(f"return-path carries a plus-tag ({rp_address}) indicating bulk bounce handling")
-        if "srs0=" in return_path.lower():
-            signals.append("return-path was rewritten by a forwarder (SRS0=), so the true sender is masked")
+        if "+" in local_part:
+            signals.append(
+                f"return-path carries a plus-tag ({rp_address}), "
+                "often used for bulk/bounce handling (VERP)"
+            )
+        if "srs0=" in return_path.lower() or "srs1=" in return_path.lower():
+            signals.append(
+                "return-path was rewritten by a forwarder (SRS0=/SRS1=), so the true sender is masked"
+            )
         rp_domain = _extract_return_path_domain(return_path)
         if rp_domain and sender_domain and rp_domain != sender_domain:
             signals.append(
                 f"return-path domain {rp_domain} differs from the From domain {sender_domain}"
             )
 
-    # (5) Subject lexicon hits.
+    # (3) Subject lexicon hits.
     subject_text = strip_reply_prefix(subject or "")
     subject_hits = [phrase for phrase in _SUBJECT_LEXICON if phrase in subject_text.lower()]
     if _SUBJECT_SERIES_RE.search(subject_text):

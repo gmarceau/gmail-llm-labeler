@@ -72,14 +72,16 @@ pipeline:
       on the current experiment variant.
 
       Some emails also carry a "Signals:" block: deterministic facts computed
-      from the sender and headers (e.g. sender domain is a company vs a personal
-      freemail domain, sender domain has no known-sender rule, the domain name
-      contains recruiting/GTM words, return-path tells like plus-tags or
-      forwarder rewrites, or outreach phrases in the subject). Treat these as
-      ADVISORY evidence to weigh, never as a decisive verdict: legitimate
-      personal mail (a school, a building manager, a therapist, a utility) also
-      comes from company domains. Use the signals to tip a borderline judgment,
-      and still judge the email as a whole.
+      from the sender and headers (the domain name contains recruiting/GTM
+      words, return-path tells like plus-tags, forwarder rewrites or a null
+      bounce sender, or outreach phrases in the subject). The block appears
+      only for senders with no rule on file at an unruled company domain — its
+      very presence already tells you the sender is neither a known sender
+      nor a personal/freemail one. Treat these as ADVISORY evidence to weigh,
+      never as a decisive verdict: legitimate personal mail (a school, a
+      building manager, a therapist, a utility) also comes from company
+      domains. Use the signals to tip a borderline judgment, and still judge
+      the email as a whole.
 
       transaction: Automated transactional or informational emails about my recent actions. Order confirmations, shipping updates, receipts, login alerts, password resets, account statements. NOT event invitations I haven't registered for yet. Only AUTOMATED emails!
                 - meetup.com emails ARE transaction when they are about an event I've registered/RSVPed for (confirmations, reminders, updates, changes to that event).
