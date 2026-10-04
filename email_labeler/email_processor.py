@@ -83,15 +83,15 @@ class EmailProcessor:
         return text_content
 
     def fetch_emails_from_gmail(
-        self, query: str = "is:unread", limit: Optional[int] = None, include_body: bool = True
+        self, query: str = "is:unread", limit: Optional[int] = None, *, include_body: bool
     ) -> List[tuple]:
         """Fetch emails directly from Gmail API and convert to database format.
 
         Args:
             query: Gmail search query.
             limit: Maximum number of messages to fetch.
-            include_body: When False, request Gmail's ``metadata`` format (headers
-                only) instead of downloading full message bodies. Used when the
+            include_body (required): When False, request Gmail's ``metadata`` format
+                (headers only) instead of downloading full message bodies. Used when the
                 transform stage classifies from headers alone (llm_body_mode=none),
                 saving bandwidth and latency; categorization still works because the
                 classification headers are captured either way.
@@ -140,9 +140,3 @@ class EmailProcessor:
         """Remove an email from the inbox."""
         self._ensure_gmail_client()
         return remove_from_inbox(self.gmail, email_id)
-
-    def prepare_email_content(self, email_tuple: tuple) -> str:
-        """Prepare email content for categorization."""
-        _, subject, sender, _, content = email_tuple
-        clean_content = self.strip_html(content)
-        return f"Subject: {subject}\nFrom: {sender}\n\n{clean_content}"

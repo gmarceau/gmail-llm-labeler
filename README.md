@@ -181,9 +181,7 @@ gmail-llm-labeler/
 │   ├── __init__.py
 │   ├── database.py              # Database operations
 │   ├── email_processor.py       # Gmail API operations
-│   ├── factory.py               # Factory functions
 │   ├── gmail_utils.py           # Gmail utility functions
-│   ├── labeler.py               # Main labeling logic
 │   ├── llm_service.py           # LLM service interface
 │   ├── metrics.py               # Metrics tracking
 │   └── pipeline/                # ETL pipeline module
@@ -201,8 +199,6 @@ gmail-llm-labeler/
 │   ├── test_cli.py
 │   ├── test_database.py
 │   ├── test_email_processor.py
-│   ├── test_factory.py
-│   ├── test_labeler.py
 │   ├── test_llm_service.py
 │   ├── test_pipeline_orchestrator.py
 │   └── test_pipeline_stages.py

@@ -73,7 +73,7 @@ class TestEmailProcessor:
 
         mock_get_email_content.side_effect = mock_get_content_side_effect
 
-        emails = processor.fetch_emails_from_gmail(query="is:unread", limit=10)
+        emails = processor.fetch_emails_from_gmail(query="is:unread", limit=10, include_body=True)
 
         assert len(emails) == 2
         assert emails[0][0] == "msg1"
@@ -110,7 +110,7 @@ class TestEmailProcessor:
 
         mock_get_email_content.side_effect = mock_get_content_side_effect
 
-        emails = processor.fetch_emails_from_gmail()
+        emails = processor.fetch_emails_from_gmail(include_body=True)
 
         # Should only return the first email since second failed
         assert len(emails) == 1
@@ -143,7 +143,7 @@ class TestEmailProcessor:
     def test_fetch_emails_from_gmail_with_body_uses_full_format(
         self, mock_get_email_content, mock_fetch_emails, mock_gmail_client
     ):
-        """Default/include_body=True keeps the full-body download path."""
+        """include_body=True keeps the full-body download path."""
         processor = EmailProcessor(gmail_client=mock_gmail_client)
         mock_fetch_emails.return_value = [{"id": "msg1", "threadId": "thread1"}]
         mock_get_email_content.return_value = {
@@ -153,7 +153,7 @@ class TestEmailProcessor:
             "body": "body",
         }
 
-        processor.fetch_emails_from_gmail(query="is:unread")
+        processor.fetch_emails_from_gmail(query="is:unread", include_body=True)
 
         _, kwargs = mock_get_email_content.call_args
         assert kwargs["format"] == "full"
@@ -194,20 +194,3 @@ class TestEmailProcessor:
 
         assert result is True
         mock_remove_from_inbox.assert_called_once_with(mock_gmail_client, "msg123")
-
-    def test_prepare_email_content(self, mock_gmail_client):
-        """Test preparing email content for categorization."""
-        processor = EmailProcessor(gmail_client=mock_gmail_client)
-
-        email_tuple = (
-            "msg123",
-            "Test Subject",
-            "sender@example.com",
-            "2024-01-01T12:00:00Z",
-            "<html><body>Test <b>content</b></body></html>",
-        )
-
-        result = processor.prepare_email_content(email_tuple)
-
-        expected = "Subject: Test Subject\nFrom: sender@example.com\n\nTest content"
-        assert result == expected

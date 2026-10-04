@@ -10,7 +10,6 @@ import pytest
 
 from email_labeler.database import EmailDatabase
 from email_labeler.email_processor import EmailProcessor
-from email_labeler.labeler import EmailAutoLabeler
 from email_labeler.llm_service import LLMService
 from email_labeler.pipeline.base import EmailRecord, EnrichedEmailRecord, PipelineContext
 from email_labeler.pipeline.config import (
@@ -324,34 +323,12 @@ def mock_email_processor(mock_gmail_client):
     mock_processor.gmail = mock_gmail_client
 
     # Configure common mock return values
-    mock_processor.prepare_email_content.return_value = (
-        "Subject: Test\\nFrom: test@example.com\\n\\nTest content"
-    )
     mock_processor.get_or_create_label.return_value = "Label_1"
     mock_processor.add_labels_to_email.return_value = True
     mock_processor.remove_from_inbox.return_value = True
     mock_processor.fetch_emails_from_gmail.return_value = []
 
     return mock_processor
-
-
-@pytest.fixture
-def email_auto_labeler(mock_email_processor, llm_service, mock_metrics_tracker, pipeline_config):
-    """Create an EmailAutoLabeler instance with mocked dependencies."""
-    labeler = EmailAutoLabeler(
-        categories=pipeline_config.transform.categories,
-        email_processor=mock_email_processor,
-        llm_service=llm_service,
-        metrics_tracker=mock_metrics_tracker,
-    )
-
-    # Mock the database
-    labeler.database = MagicMock()
-    labeler.database.get_unprocessed_emails.return_value = []
-    labeler.database.update_email_labels.return_value = None
-    labeler.database.close.return_value = None
-
-    return labeler
 
 
 @pytest.fixture(autouse=True)
