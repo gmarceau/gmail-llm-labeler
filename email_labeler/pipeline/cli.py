@@ -359,12 +359,12 @@ def review_senders(args):
     config = PipelineConfig.from_yaml(args.config) if args.config else PipelineConfig.from_env()
     # sender_rules keys mix full addresses (recruiter@gmail.com) and bare domains
     # (substack.com); a sender is already covered if either its address or domain has a rule.
-    rule_keys = set(getattr(config.transform, "sender_rules", {}).keys())
+    rule_keys = set(config.transform.sender_rules.keys())
     known_addresses = {k for k in rule_keys if "@" in k}
     known_domains = rule_keys - known_addresses
     # On personal/freemail domains every sender is a different person, so grouping by domain
     # is useless; break those out per individual address (the pasteable sender_rule key).
-    personal_domains = set(getattr(config.transform, "personal_domains", []))
+    personal_domains = set(config.transform.personal_domains)
 
     path_config = PathConfig(config_file=args.config)
     db = EmailDatabase(database_file=str(path_config.database_file))

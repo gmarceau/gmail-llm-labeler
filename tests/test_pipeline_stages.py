@@ -45,18 +45,6 @@ class TestExtractStage:
         ctx.config.transform.llm_body_mode = "full"
         assert stage._needs_body(ctx) is True
 
-    def test_needs_body_defaults_true_when_transform_missing(
-        self, mock_email_processor, email_database, pipeline_config
-    ):
-        """Missing transform config never silently starves the classifier."""
-        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
-
-        class _CfgNoTransform:
-            pass
-
-        ctx = PipelineContext.create(_CfgNoTransform(), dry_run=True)
-        assert stage._needs_body(ctx) is True
-
     def test_execute_success(
         self, mock_email_processor, email_database, pipeline_config, pipeline_context
     ):

@@ -102,15 +102,9 @@ class ExtractStage(PipelineStage):
         """Whether extract must download message bodies for this run.
 
         The transform stage classifies from headers alone when llm_body_mode=none,
-        so bodies are only needed for the 'head' and 'full' variants. Falls back to
-        True (fetch bodies) when the transform config can't be inspected, so an
-        unexpected config never silently starves the classifier of content.
+        so bodies are only needed for the 'head' and 'full' variants.
         """
-        transform = getattr(context.config, "transform", None)
-        body_mode = getattr(transform, "llm_body_mode", None)
-        if body_mode is None:
-            return True
-        return body_mode != "none"
+        return context.config.transform.llm_body_mode != "none"
 
     def _extract_from_database(self, context: PipelineContext) -> List[EmailRecord]:
         """Extract unprocessed emails from database."""
@@ -172,5 +166,4 @@ class ExtractStage(PipelineStage):
     @property
     def skip_on_error(self) -> bool:
         """Whether to skip emails that fail to process."""
-        # Look for skip_on_error in config, default to True
-        return getattr(self.config, "skip_on_error", True)
+        return self.config.skip_on_error

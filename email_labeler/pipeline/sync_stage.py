@@ -35,7 +35,7 @@ class SyncStage(PipelineStage):
         # Note: The original had db_path parameter, but EmailDatabase doesn't support it
         # Using the default database_file parameter instead
         self.database = database or EmailDatabase(
-            database_file=getattr(config, "database_path", "email_pipeline.db")
+            database_file=config.database_path
         )
         self.metrics_tracker = metrics_tracker or MetricsTracker()
 

@@ -1,15 +1,27 @@
-"""Configuration classes for the ETL pipeline."""
+"""Configuration classes for the ETL pipeline.
+
+These are pydantic models validated at load time. Unknown/typo'd keys are
+rejected (``extra="forbid"``) so a misspelled setting (e.g. ``sender_rule:``
+instead of ``sender_rules:``) fails fast at boot with a clear error instead of
+being silently swallowed into a default. Fields with a sensible default stay
+optional; only genuinely required values must be supplied.
+"""
 
 import os
-from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import yaml
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
-@dataclass
-class ExtractConfig:
+class ConfigError(ValueError):
+    """Raised when a pipeline config file is missing, malformed, or has unknown keys."""
+
+
+class ExtractConfig(BaseModel):
     """Configuration for the Extract stage."""
+
+    model_config = ConfigDict(extra="forbid")
 
     source: str = "gmail"  # Options: "gmail", "database"
     gmail_query: str = "is:unread"
@@ -17,9 +29,10 @@ class ExtractConfig:
     max_results: Optional[int] = None
 
 
-@dataclass
-class TransformConfig:
+class TransformConfig(BaseModel):
     """Configuration for the Transform stage."""
+
+    model_config = ConfigDict(extra="forbid")
 
     llm_service: str = "openai"  # Options: "openai", "ollama"
     model: str = "gpt-4o-mini"
@@ -27,29 +40,27 @@ class TransformConfig:
     max_content_length: int = 4000
     timeout: int = 30
     skip_on_error: bool = True
-    categories: List[str] = field(
-        default_factory=lambda: [
-            "Marketing",
-            "Response Needed / High Priority",
-            "Bills",
-            "Subscriptions",
-            "Newsletters",
-            "Personal",
-            "Work",
-            "Events",
-            "Travel",
-            "Receipts",
-            "Low quality",
-            "Notifications",
-            "Other",
-        ]
-    )
+    categories: List[str] = [
+        "Marketing",
+        "Response Needed / High Priority",
+        "Bills",
+        "Subscriptions",
+        "Newsletters",
+        "Personal",
+        "Work",
+        "Events",
+        "Travel",
+        "Receipts",
+        "Low quality",
+        "Notifications",
+        "Other",
+    ]
     system_prompt: Optional[str] = None  # Custom system prompt (supports templating)
     user_prompt: Optional[str] = None  # Custom user prompt (supports templating)
-    sender_rules: Dict[str, str] = field(default_factory=dict)  # full address or registered domain -> category
+    sender_rules: Dict[str, str] = {}  # full address or registered domain -> category
     # Freemail/personal domains: in `review-senders` these are broken out per individual
     # sender (you'd never rule the whole domain), rather than collapsed into one domain row.
-    personal_domains: List[str] = field(default_factory=list)
+    personal_domains: List[str] = []
     # Optional external file (path relative to the main config) holding top-level
     # `sender_rules:` and `personal_domains:`. When set, from_yaml loads it into the two
     # fields above so the growing reviewed-rules list stays out of the main pipeline config.
@@ -67,29 +78,29 @@ GMAIL_TAB_LABEL_IDS = {
 }
 
 
-@dataclass
-class LoadConfig:
+class LoadConfig(BaseModel):
     """Configuration for the Load stage."""
+
+    model_config = ConfigDict(extra="forbid")
 
     apply_labels: bool = True
     create_missing_labels: bool = True
-    category_actions: Dict[str, List[str]] = field(
-        default_factory=lambda: {
-            "Marketing": ["apply_label", "archive"],
-            "Response Needed / High Priority": ["apply_label", "star"],
-            "Bills": ["apply_label", "star"],
-            "Newsletters": ["apply_label", "archive"],
-            "Low quality": ["apply_label", "archive", "mark_as_read"],
-            "Notifications": ["apply_label", "mark_as_read"],
-        }
-    )
-    default_actions: List[str] = field(default_factory=lambda: ["apply_label"])
-    category_tab_map: Dict[str, str] = field(default_factory=dict)
+    category_actions: Dict[str, List[str]] = {
+        "Marketing": ["apply_label", "archive"],
+        "Response Needed / High Priority": ["apply_label", "star"],
+        "Bills": ["apply_label", "star"],
+        "Newsletters": ["apply_label", "archive"],
+        "Low quality": ["apply_label", "archive", "mark_as_read"],
+        "Notifications": ["apply_label", "mark_as_read"],
+    }
+    default_actions: List[str] = ["apply_label"]
+    category_tab_map: Dict[str, str] = {}
 
 
-@dataclass
-class SyncConfig:
+class SyncConfig(BaseModel):
     """Configuration for the Sync stage."""
+
+    model_config = ConfigDict(extra="forbid")
 
     database_path: str = "email_pipeline.db"
     save_metrics: bool = True
@@ -98,9 +109,10 @@ class SyncConfig:
     track_metrics: bool = True
 
 
-@dataclass
-class MonitoringConfig:
+class MonitoringConfig(BaseModel):
     """Configuration for monitoring and observability."""
+
+    model_config = ConfigDict(extra="forbid")
 
     log_level: str = "INFO"
     metrics_export: str = "json"  # Options: "json", "csv", "prometheus"
@@ -108,30 +120,94 @@ class MonitoringConfig:
     enable_tracing: bool = False
 
 
-@dataclass
-class PipelineConfig:
+class PathsConfig(BaseModel):
+    """Top-level `paths:` block, consumed by email_labeler.config.PathConfig.
+
+    Validated here too so a typo in a path key fails fast at boot rather than
+    being silently ignored by PathConfig's ``yaml_paths.get(...)`` lookups.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    database_file: Optional[str] = None
+    llm_log_file: Optional[str] = None
+    error_log_file: Optional[str] = None
+    test_output_file: Optional[str] = None
+    test_summary_file: Optional[str] = None
+
+
+class PipelineConfig(BaseModel):
     """Main pipeline configuration."""
 
-    extract: ExtractConfig = field(default_factory=ExtractConfig)
-    transform: TransformConfig = field(default_factory=TransformConfig)
-    load: LoadConfig = field(default_factory=LoadConfig)
-    sync: SyncConfig = field(default_factory=SyncConfig)
-    monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
+    model_config = ConfigDict(extra="forbid")
+
+    extract: ExtractConfig = ExtractConfig()
+    transform: TransformConfig = TransformConfig()
+    load: LoadConfig = LoadConfig()
+    sync: SyncConfig = SyncConfig()
+    monitoring: MonitoringConfig = MonitoringConfig()
     dry_run: bool = False
     continue_on_error: bool = True
     max_retries: int = 3
 
     @classmethod
     def from_yaml(cls, path: str) -> "PipelineConfig":
-        """Load configuration from YAML file."""
-        with open(path) as f:
-            data = yaml.safe_load(f)
+        """Load configuration from YAML file.
+
+        Raises:
+            ConfigError: if the file is missing/unreadable, or if it contains an
+                unknown/typo'd key or a wrongly-typed value. The message names the
+                config file and the offending field so a boot-time failure is
+                self-explanatory.
+        """
+        try:
+            with open(path) as f:
+                data = yaml.safe_load(f) or {}
+        except OSError as e:
+            raise ConfigError(f"Could not read config file {path!r}: {e}") from e
+
+        if not isinstance(data, dict):
+            raise ConfigError(
+                f"Config file {path!r} must contain a top-level mapping, got {type(data).__name__}"
+            )
 
         pipeline_data = data.get("pipeline", {})
+        if pipeline_data is None:
+            pipeline_data = {}
+        if not isinstance(pipeline_data, dict):
+            raise ConfigError(
+                f"'pipeline' in {path!r} must be a mapping, got {type(pipeline_data).__name__}"
+            )
 
-        # Create configs from nested dictionaries
-        extract_config = ExtractConfig(**pipeline_data.get("extract", {}))
-        transform_config = TransformConfig(**pipeline_data.get("transform", {}))
+        unknown_top = set(data) - {"pipeline", "paths"}
+        if unknown_top:
+            raise ConfigError(
+                f"Unknown top-level key(s) in {path!r}: "
+                f"{', '.join(sorted(unknown_top))}. Expected only 'pipeline' and 'paths'."
+            )
+
+        # Build each nested config. Any unknown/typo'd key or wrong type raises a
+        # pydantic ValidationError, which we re-raise with the file path attached.
+        try:
+            extract_config = ExtractConfig(**pipeline_data.get("extract", {}))
+            transform_config = TransformConfig(**pipeline_data.get("transform", {}))
+            load_config = LoadConfig(**pipeline_data.get("load", {}))
+            sync_config = SyncConfig(**pipeline_data.get("sync", {}))
+            monitoring_config = MonitoringConfig(**pipeline_data.get("monitoring", {}))
+            # `paths:` is consumed separately by PathConfig, but validate it here so a
+            # typo'd path key fails at boot instead of being silently ignored there.
+            PathsConfig(**(data.get("paths") or {}))
+            unknown_pipeline = set(pipeline_data) - {
+                "extract", "transform", "load", "sync", "monitoring",
+                "dry_run", "continue_on_error", "max_retries",
+            }
+            if unknown_pipeline:
+                raise ConfigError(
+                    f"Unknown key(s) under 'pipeline' in {path!r}: "
+                    f"{', '.join(sorted(unknown_pipeline))}."
+                )
+        except ValidationError as e:
+            raise ConfigError(f"Invalid config in {path!r}:\n{e}") from e
 
         # An external sender-rules file (path relative to this config) is the source of
         # truth for sender_rules/personal_domains when present.
@@ -139,25 +215,41 @@ class PipelineConfig:
             rules_path = os.path.join(
                 os.path.dirname(os.path.abspath(path)), transform_config.sender_rules_file
             )
-            with open(rules_path) as rf:
-                rules_data = yaml.safe_load(rf) or {}
+            try:
+                with open(rules_path) as rf:
+                    rules_data = yaml.safe_load(rf) or {}
+            except OSError as e:
+                raise ConfigError(
+                    f"Could not read sender_rules_file {transform_config.sender_rules_file!r} "
+                    f"(resolved to {rules_path!r}, from {path!r}): {e}"
+                ) from e
+            if not isinstance(rules_data, dict):
+                raise ConfigError(
+                    f"sender_rules_file {rules_path!r} must contain a top-level mapping"
+                )
+            unknown_rules = set(rules_data) - {"sender_rules", "personal_domains"}
+            if unknown_rules:
+                raise ConfigError(
+                    f"Unknown key(s) in sender_rules_file {rules_path!r}: "
+                    f"{', '.join(sorted(unknown_rules))}. "
+                    "Expected only 'sender_rules' and 'personal_domains'."
+                )
             transform_config.sender_rules = rules_data.get("sender_rules") or {}
             transform_config.personal_domains = rules_data.get("personal_domains") or []
 
-        load_config = LoadConfig(**pipeline_data.get("load", {}))
-        sync_config = SyncConfig(**pipeline_data.get("sync", {}))
-        monitoring_config = MonitoringConfig(**pipeline_data.get("monitoring", {}))
-
-        return cls(
-            extract=extract_config,
-            transform=transform_config,
-            load=load_config,
-            sync=sync_config,
-            monitoring=monitoring_config,
-            dry_run=pipeline_data.get("dry_run", False),
-            continue_on_error=pipeline_data.get("continue_on_error", True),
-            max_retries=pipeline_data.get("max_retries", 3),
-        )
+        try:
+            return cls(
+                extract=extract_config,
+                transform=transform_config,
+                load=load_config,
+                sync=sync_config,
+                monitoring=monitoring_config,
+                dry_run=pipeline_data.get("dry_run", False),
+                continue_on_error=pipeline_data.get("continue_on_error", True),
+                max_retries=pipeline_data.get("max_retries", 3),
+            )
+        except ValidationError as e:
+            raise ConfigError(f"Invalid config in {path!r}:\n{e}") from e
 
     @classmethod
     def from_env(cls) -> "PipelineConfig":
