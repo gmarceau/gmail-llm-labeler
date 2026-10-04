@@ -74,7 +74,9 @@ class ExtractStage(PipelineStage):
             logger.info("DRY RUN: Fetching emails from Gmail for real; nothing will be written")
 
         raw_emails = self.email_processor.fetch_emails_from_gmail(
-            query=self.config.gmail_query, limit=self.config.max_results or self.config.batch_size
+            query=self.config.gmail_query,
+            limit=self.config.max_results or self.config.batch_size,
+            include_body=self._needs_body(context),
         )
 
         emails = []
@@ -95,6 +97,20 @@ class ExtractStage(PipelineStage):
                     raise
 
         return emails
+
+    def _needs_body(self, context: PipelineContext) -> bool:
+        """Whether extract must download message bodies for this run.
+
+        The transform stage classifies from headers alone when llm_body_mode=none,
+        so bodies are only needed for the 'head' and 'full' variants. Falls back to
+        True (fetch bodies) when the transform config can't be inspected, so an
+        unexpected config never silently starves the classifier of content.
+        """
+        transform = getattr(context.config, "transform", None)
+        body_mode = getattr(transform, "llm_body_mode", None)
+        if body_mode is None:
+            return True
+        return body_mode != "none"
 
     def _extract_from_database(self, context: PipelineContext) -> List[EmailRecord]:
         """Extract unprocessed emails from database."""

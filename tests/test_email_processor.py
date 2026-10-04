@@ -63,7 +63,7 @@ class TestEmailProcessor:
         ]
 
         # Mock the get_email_content function
-        def mock_get_content_side_effect(gmail, email_id):
+        def mock_get_content_side_effect(gmail, email_id, **kwargs):
             return {
                 "subject": f"Subject {email_id}",
                 "from": f"sender{email_id}@example.com",
@@ -98,7 +98,7 @@ class TestEmailProcessor:
         ]
 
         # Mock the get_email_content function to fail for second email
-        def mock_get_content_side_effect(gmail, email_id):
+        def mock_get_content_side_effect(gmail, email_id, **kwargs):
             if email_id == "msg2":
                 raise Exception("Failed to fetch email")
             return {
@@ -115,6 +115,49 @@ class TestEmailProcessor:
         # Should only return the first email since second failed
         assert len(emails) == 1
         assert emails[0][0] == "msg1"
+
+    @patch("email_labeler.email_processor.fetch_emails")
+    @patch("email_labeler.email_processor.get_email_content")
+    def test_fetch_emails_from_gmail_without_body_uses_metadata_format(
+        self, mock_get_email_content, mock_fetch_emails, mock_gmail_client
+    ):
+        """With include_body=False, Gmail is queried in metadata format with the
+        classification headers so categorization still works from headers alone."""
+        processor = EmailProcessor(gmail_client=mock_gmail_client)
+        mock_fetch_emails.return_value = [{"id": "msg1", "threadId": "thread1"}]
+        mock_get_email_content.return_value = {
+            "subject": "Subject msg1",
+            "from": "sender@example.com",
+            "date": "2024-01-01T12:00:00Z",
+            "headers": {"list-unsubscribe": "<mailto:u@e.com>"},
+        }
+
+        processor.fetch_emails_from_gmail(query="is:unread", include_body=False)
+
+        _, kwargs = mock_get_email_content.call_args
+        assert kwargs["format"] == "metadata"
+        assert "List-Unsubscribe" in kwargs["metadata_headers"]
+
+    @patch("email_labeler.email_processor.fetch_emails")
+    @patch("email_labeler.email_processor.get_email_content")
+    def test_fetch_emails_from_gmail_with_body_uses_full_format(
+        self, mock_get_email_content, mock_fetch_emails, mock_gmail_client
+    ):
+        """Default/include_body=True keeps the full-body download path."""
+        processor = EmailProcessor(gmail_client=mock_gmail_client)
+        mock_fetch_emails.return_value = [{"id": "msg1", "threadId": "thread1"}]
+        mock_get_email_content.return_value = {
+            "subject": "Subject msg1",
+            "from": "sender@example.com",
+            "date": "2024-01-01T12:00:00Z",
+            "body": "body",
+        }
+
+        processor.fetch_emails_from_gmail(query="is:unread")
+
+        _, kwargs = mock_get_email_content.call_args
+        assert kwargs["format"] == "full"
+        assert "metadata_headers" not in kwargs
 
     @patch("email_labeler.email_processor.get_or_create_label")
     def test_get_or_create_label(self, mock_get_or_create_label, mock_gmail_client):

@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from googleapiclient.discovery import Resource
 
 from .gmail_utils import (
+    CLASSIFICATION_METADATA_HEADERS,
     add_labels_to_email,
     fetch_emails,
     get_email_content,
@@ -82,16 +83,32 @@ class EmailProcessor:
         return text_content
 
     def fetch_emails_from_gmail(
-        self, query: str = "is:unread", limit: Optional[int] = None
+        self, query: str = "is:unread", limit: Optional[int] = None, include_body: bool = True
     ) -> List[tuple]:
-        """Fetch emails directly from Gmail API and convert to database format."""
+        """Fetch emails directly from Gmail API and convert to database format.
+
+        Args:
+            query: Gmail search query.
+            limit: Maximum number of messages to fetch.
+            include_body: When False, request Gmail's ``metadata`` format (headers
+                only) instead of downloading full message bodies. Used when the
+                transform stage classifies from headers alone (llm_body_mode=none),
+                saving bandwidth and latency; categorization still works because the
+                classification headers are captured either way.
+        """
         self._ensure_gmail_client()
         messages = fetch_emails(self.gmail, query, max_results=limit)
+
+        fetch_kwargs = (
+            {"format": "full"}
+            if include_body
+            else {"format": "metadata", "metadata_headers": CLASSIFICATION_METADATA_HEADERS}
+        )
 
         emails_data = []
         for msg in messages:
             try:
-                email_data = get_email_content(self.gmail, msg["id"])
+                email_data = get_email_content(self.gmail, msg["id"], **fetch_kwargs)
                 # Convert to tuple format matching database structure
                 emails_data.append(
                     (
