@@ -14,9 +14,11 @@ from email_labeler.pipeline.config import (
 
 class TestTransformConfigRoundTrip:
     def test_sender_rules_round_trips(self, tmp_path):
+        # Rule values must be configured categories — from_yaml rejects a value that
+        # isn't in `categories` (the default set is capitalized). See TestSenderRuleValues.
         config = PipelineConfig(
             transform=TransformConfig(
-                sender_rules={"substack.com": "newsletter", "recruiter@gmail.com": "marketing"}
+                sender_rules={"substack.com": "Newsletters", "recruiter@gmail.com": "Marketing"}
             )
         )
         path = str(tmp_path / "config.yaml")
@@ -25,8 +27,8 @@ class TestTransformConfigRoundTrip:
         loaded = PipelineConfig.from_yaml(path)
 
         assert loaded.transform.sender_rules == {
-            "substack.com": "newsletter",
-            "recruiter@gmail.com": "marketing",
+            "substack.com": "Newsletters",
+            "recruiter@gmail.com": "Marketing",
         }
 
     def test_personal_domains_round_trips(self, tmp_path):
@@ -88,10 +90,11 @@ class TestTransformConfigRoundTrip:
 
     def test_sender_rules_file_is_loaded(self, tmp_path):
         """transform.sender_rules_file (relative to the config) supplies the rules."""
+        # Rule values must be configured categories (default set is capitalized).
         (tmp_path / "rules.yaml").write_text(
             "sender_rules:\n"
-            "  substack.com: newsletter\n"
-            "  recruiter@gmail.com: marketing\n"
+            "  substack.com: Newsletters\n"
+            "  recruiter@gmail.com: Marketing\n"
             "personal_domains:\n"
             "  - gmail.com\n"
         )
@@ -104,8 +107,8 @@ class TestTransformConfigRoundTrip:
         loaded = PipelineConfig.from_yaml(str(tmp_path / "config.yaml"))
 
         assert loaded.transform.sender_rules == {
-            "substack.com": "newsletter",
-            "recruiter@gmail.com": "marketing",
+            "substack.com": "Newsletters",
+            "recruiter@gmail.com": "Marketing",
         }
         assert loaded.transform.personal_domains == ["gmail.com"]
 
@@ -248,6 +251,141 @@ class TestConfigValidation:
         assert loaded.transform.llm_body_mode == "none"
         assert loaded.transform.sender_rules_file == "sender_rules_production_7b.yaml"
         assert len(loaded.transform.sender_rules) > 0
+
+
+class TestSenderRulesFileTypes:
+    """A wrongly-typed rules file fails at from_yaml, not silently at runtime."""
+
+    def _config_with_rules_file(self, tmp_path, rules_text):
+        (tmp_path / "rules.yaml").write_text(rules_text)
+        (tmp_path / "config.yaml").write_text(
+            "pipeline:\n  transform:\n    sender_rules_file: rules.yaml\n"
+        )
+        return str(tmp_path / "config.yaml")
+
+    def test_sender_rules_as_list_rejected(self, tmp_path):
+        path = self._config_with_rules_file(
+            tmp_path, "sender_rules:\n  - substack.com: Newsletters\n"
+        )
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(path)
+
+        assert "rules.yaml" in str(exc.value)
+        assert "sender_rules" in str(exc.value)
+
+    def test_sender_rules_as_string_rejected(self, tmp_path):
+        path = self._config_with_rules_file(tmp_path, "sender_rules: Newsletters\n")
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(path)
+
+        assert "rules.yaml" in str(exc.value)
+        assert "sender_rules" in str(exc.value)
+
+    def test_personal_domains_as_dict_rejected(self, tmp_path):
+        path = self._config_with_rules_file(tmp_path, "personal_domains:\n  gmail.com: true\n")
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(path)
+
+        assert "rules.yaml" in str(exc.value)
+        assert "personal_domains" in str(exc.value)
+
+    def test_personal_domains_as_string_rejected(self, tmp_path):
+        path = self._config_with_rules_file(tmp_path, "personal_domains: gmail.com\n")
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(path)
+
+        assert "rules.yaml" in str(exc.value)
+        assert "personal_domains" in str(exc.value)
+
+    def test_empty_values_are_tolerated(self, tmp_path):
+        """Empty/null rules blocks stay coerced to their empty defaults."""
+        path = self._config_with_rules_file(tmp_path, "sender_rules: []\npersonal_domains:\n")
+
+        loaded = PipelineConfig.from_yaml(path)
+
+        assert loaded.transform.sender_rules == {}
+        assert loaded.transform.personal_domains == []
+
+
+class TestSenderRuleValues:
+    """Every sender-rule value must be a configured category, case-sensitively.
+
+    The runtime sender-rule lookups are case-sensitive, so a value like
+    "Marketing" against a "marketing" category silently never matches; such a
+    rule is fatal at load time instead.
+    """
+
+    def test_invalid_value_inline_raises(self, tmp_path):
+        (tmp_path / "config.yaml").write_text(
+            "pipeline:\n"
+            "  transform:\n"
+            "    sender_rules:\n"
+            "      a.com: NotACategory\n"
+        )
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(str(tmp_path / "config.yaml"))
+
+        message = str(exc.value)
+        assert "a.com" in message
+        assert "NotACategory" in message
+        assert "config.yaml" in message
+
+    def test_invalid_value_in_rules_file_raises(self, tmp_path):
+        """An offender from the rules file names the rules file AND the config."""
+        (tmp_path / "rules.yaml").write_text("sender_rules:\n  a.com: NotACategory\n")
+        (tmp_path / "config.yaml").write_text(
+            "pipeline:\n"
+            "  transform:\n"
+            "    categories: [marketing, main]\n"
+            "    sender_rules_file: rules.yaml\n"
+        )
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(str(tmp_path / "config.yaml"))
+
+        message = str(exc.value)
+        assert "a.com" in message
+        assert "NotACategory" in message
+        assert "rules.yaml" in message
+        assert "config.yaml" in message
+
+    def test_case_mismatch_fails(self, tmp_path):
+        """"Marketing" is not "marketing": the check is case-sensitive."""
+        (tmp_path / "config.yaml").write_text(
+            "pipeline:\n"
+            "  transform:\n"
+            "    categories: [marketing, main]\n"
+            "    sender_rules:\n"
+            "      a.com: Marketing\n"
+        )
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(str(tmp_path / "config.yaml"))
+
+        assert "a.com: Marketing" in str(exc.value)
+
+    def test_all_offending_rules_listed(self, tmp_path):
+        """Every bad rule is listed, not just the first one."""
+        (tmp_path / "config.yaml").write_text(
+            "pipeline:\n"
+            "  transform:\n"
+            "    categories: [marketing]\n"
+            "    sender_rules:\n"
+            "      a.com: newsletter\n"
+            "      b.com: NotACategory\n"
+        )
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(str(tmp_path / "config.yaml"))
+
+        message = str(exc.value)
+        assert "a.com: newsletter" in message
+        assert "b.com: NotACategory" in message
 
 
 class TestColdOutreachConfig:

@@ -15,7 +15,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class ConfigError(ValueError):
-    """Raised when a pipeline config file is missing, malformed, or has unknown keys."""
+    """Raised when a pipeline config file is missing, malformed, or has unknown keys
+    or invalid values (e.g. sender rules whose values are not configured categories)."""
 
 
 class ExtractConfig(BaseModel):
@@ -48,7 +49,10 @@ class EscalationConfig(BaseModel):
 class TransformConfig(BaseModel):
     """Configuration for the Transform stage."""
 
-    model_config = ConfigDict(extra="forbid")
+    # validate_assignment: from_yaml loads the external rules file into
+    # sender_rules/personal_domains AFTER construction; re-validating those
+    # assignments makes a wrongly-typed rules file fail at load, not at runtime.
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
     llm_service: str = "openai"  # Options: "openai", "ollama"
     model: str = "gpt-4o-mini"
     temperature: float = 0.0  # Sampling temperature; 0 for deterministic classification
@@ -172,9 +176,11 @@ class PipelineConfig(BaseModel):
 
         Raises:
             ConfigError: if the file is missing/unreadable, or if it contains an
-                unknown/typo'd key or a wrongly-typed value. The message names the
-                config file and the offending field so a boot-time failure is
-                self-explanatory.
+                unknown/typo'd key, a wrongly-typed value (including in the external
+                sender-rules file), or a sender rule whose value is not a configured
+                category. The message names the config file (and the rules file, when
+                the offender came from it) and the offending field, so a boot-time
+                failure is self-explanatory.
         """
         try:
             with open(path) as f:
@@ -227,6 +233,7 @@ class PipelineConfig(BaseModel):
 
         # An external sender-rules file (path relative to this config) is the source of
         # truth for sender_rules/personal_domains when present.
+        rules_source = path  # where the effective sender_rules came from (for errors)
         if transform_config.sender_rules_file:
             rules_path = os.path.join(
                 os.path.dirname(os.path.abspath(path)), transform_config.sender_rules_file
@@ -250,8 +257,38 @@ class PipelineConfig(BaseModel):
                     f"{', '.join(sorted(unknown_rules))}. "
                     "Expected only 'sender_rules' and 'personal_domains'."
                 )
-            transform_config.sender_rules = rules_data.get("sender_rules") or {}
-            transform_config.personal_domains = rules_data.get("personal_domains") or []
+            # TransformConfig validates on assignment, so a sender_rules that is a
+            # list/string (or personal_domains as a dict/string) fails right here,
+            # named with the rules file. The `or {}`/`or []` keep empty values tolerated.
+            try:
+                transform_config.sender_rules = rules_data.get("sender_rules") or {}
+                transform_config.personal_domains = rules_data.get("personal_domains") or []
+            except ValidationError as e:
+                raise ConfigError(
+                    f"Invalid sender_rules_file {rules_path!r} (from {path!r}):\n{e}"
+                ) from e
+            rules_source = rules_path
+
+        # Every rule VALUE must be one of the configured categories, case-sensitively:
+        # the runtime sender-rule lookups are case-sensitive, so e.g. a capitalized
+        # "Marketing" against a lowercase "marketing" category would silently never
+        # match. List every offender so one load error shows the whole cleanup needed.
+        invalid_rules = sorted(
+            f"{sender}: {category}"
+            for sender, category in transform_config.sender_rules.items()
+            if category not in transform_config.categories
+        )
+        if invalid_rules:
+            source = (
+                f"{rules_source!r} (referenced from {path!r})"
+                if rules_source != path
+                else f"{rules_source!r}"
+            )
+            raise ConfigError(
+                f"Invalid sender_rules in {source}: rule values must be one of the "
+                f"configured categories {transform_config.categories} (case-sensitive). "
+                f"Offending rule(s):\n  " + "\n  ".join(invalid_rules)
+            )
 
         try:
             return cls(
