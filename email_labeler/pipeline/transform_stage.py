@@ -141,6 +141,18 @@ class TransformStage(PipelineStage):
         else:
             category, explanation = self.llm_service.categorize_email(email_content)
 
+            # Tiered escalation: a header-only "main" for an unruled company-domain
+            # sender is exactly the recruiter/cold-mail leak — re-classify once with
+            # the body head, where the tell-tale cues live. Max one extra pass.
+            if category == "main" and self._should_escalate(email):
+                context.increment_metric("transform_escalation_second_pass")
+                escalated_content = self._build_email_content(
+                    email,
+                    body_mode="head",
+                    body_head_lines=self.config.escalation.body_head_lines,
+                )
+                category, explanation = self.llm_service.categorize_email(escalated_content)
+
         # Validate category
         if category not in self.config.categories:
             logger.warning(f"Unknown category '{category}' for email {email.id}, using 'main'")
@@ -191,13 +203,26 @@ class TransformStage(PipelineStage):
             processing_time=time.time() - start_time,
         )
 
-    def _build_email_content(self, email: EmailRecord) -> str:
+    def _build_email_content(
+        self,
+        email: EmailRecord,
+        body_mode: Optional[str] = None,
+        body_head_lines: Optional[int] = None,
+    ) -> str:
         """Build the LLM input: header-first (no fixed rules — the LLM judges from
         headers directly), with body inclusion gated by llm_body_mode.
 
         For header-poor mail a compact "Signals:" block of deterministic facts is
         appended (advisory only — the LLM still judges). See _build_signals.
+
+        `body_mode`/`body_head_lines` override the configured llm_body_mode for a
+        single call (used by escalation's second pass, which forces "head").
         """
+        mode = body_mode if body_mode is not None else self.config.llm_body_mode
+        head_lines = (
+            body_head_lines if body_head_lines is not None else self.config.llm_body_head_lines
+        )
+
         header_block = format_classification_headers(email.headers)
         subject = strip_reply_prefix(email.subject)
         email_content = f"Subject: {subject}\nFrom: {email.sender}\n{header_block}"
@@ -207,15 +232,34 @@ class TransformStage(PipelineStage):
             email_content += f"\n\n{signals_block}"
 
         body = ""
-        if self.config.llm_body_mode == "head":
+        if mode == "head":
             clean_content = self.email_processor.strip_html(email.content)
-            body = "\n".join(clean_content.splitlines()[: self.config.llm_body_head_lines])
-        elif self.config.llm_body_mode == "full":
+            body = "\n".join(clean_content.splitlines()[:head_lines])
+        elif mode == "full":
             body = self._smart_truncate(self.email_processor.strip_html(email.content))
 
         if body:
             email_content += f"\n\n{body}"
         return email_content
+
+    def _should_escalate(self, email: EmailRecord) -> bool:
+        """Whether a header-only `main` verdict warrants a body-head second pass.
+
+        Only for an unruled company-domain sender: sender-rule shortcut hits never
+        reach the LLM, and freemail/personal senders are legitimately personal, so
+        neither is escalated. Requires a body to escalate.
+        """
+        if not self.config.escalation.enabled:
+            return False
+        if not email.content.strip():
+            return False
+        domain = extract_domain(email.sender)
+        if not domain or domain in self.config.personal_domains:
+            return False
+        rules = self.config.sender_rules
+        if domain in rules or (extract_address(email.sender) in rules):
+            return False
+        return True
 
     def _build_signals(self, email: EmailRecord) -> str:
         """Deterministic advisory signals for the LLM, or "" when not applicable.

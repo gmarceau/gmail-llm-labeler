@@ -102,9 +102,12 @@ class ExtractStage(PipelineStage):
         """Whether extract must download message bodies for this run.
 
         The transform stage classifies from headers alone when llm_body_mode=none,
-        so bodies are only needed for the 'head' and 'full' variants.
+        so bodies are ordinarily only needed for the 'head' and 'full' variants.
+        Escalation, however, re-classifies borderline `main` with the body head,
+        so it also requires bodies.
         """
-        return context.config.transform.llm_body_mode != "none"
+        transform = context.config.transform
+        return transform.llm_body_mode != "none" or transform.escalation.enabled
 
     def _extract_from_database(self, context: PipelineContext) -> List[EmailRecord]:
         """Extract unprocessed emails from database."""

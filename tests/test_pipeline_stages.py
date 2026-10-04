@@ -39,10 +39,22 @@ class TestExtractStage:
         ctx = PipelineContext.create(pipeline_config, dry_run=True)
 
         ctx.config.transform.llm_body_mode = "none"
+        ctx.config.transform.escalation.enabled = False
         assert stage._needs_body(ctx) is False
         ctx.config.transform.llm_body_mode = "head"
         assert stage._needs_body(ctx) is True
         ctx.config.transform.llm_body_mode = "full"
+        assert stage._needs_body(ctx) is True
+
+    def test_needs_body_when_escalation_enabled(
+        self, mock_email_processor, email_database, pipeline_config
+    ):
+        """Escalation needs the body head, so header-only mode still fetches bodies."""
+        stage = ExtractStage(pipeline_config.extract, mock_email_processor, email_database)
+        ctx = PipelineContext.create(pipeline_config, dry_run=True)
+
+        ctx.config.transform.llm_body_mode = "none"
+        ctx.config.transform.escalation.enabled = True
         assert stage._needs_body(ctx) is True
 
     def test_execute_success(
@@ -731,6 +743,165 @@ class TestTransformStageSignalsInjection:
 
         assert enriched[0].category == "Marketing"
         llm_service.categorize_email.assert_not_called()
+
+
+class TestTransformStageEscalation:
+    """Tiered body escalation: re-classify borderline `main` with the body head."""
+
+    LOWERCASE_CATEGORIES = ["transaction", "newsletter", "marketing", "cold-outreach", "main"]
+
+    def _email(self, **overrides):
+        defaults = dict(
+            id="e1",
+            subject="Guillaume, love your background!",
+            sender="Kenn Peters <kenn@thalolabs.com>",
+            content="Hi Guillaume\n\nWe are a Series A stealth startup backed by Sequoia\nHappy to offer equity and a $5k referral bonus\nAre you open to a brief chat?\nThanks\nKenn",
+            received_date="2024-01-01T10:00:00Z",
+            headers={"return-path": "<kenn@thalolabs.com>"},
+        )
+        defaults.update(overrides)
+        return EmailRecord(**defaults)
+
+    def test_escalates_borderline_main_with_body_head(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.llm_body_mode = "none"
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        pipeline_config.transform.escalation.body_head_lines = 3
+        mock_email_processor.strip_html.side_effect = lambda c: c
+        # First pass says main; escalated (body-head) pass says marketing.
+        llm_service.categorize_email.side_effect = [("main", "looks personal"), ("marketing", "pitch")]
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "marketing"
+        assert llm_service.categorize_email.call_count == 2
+        # First pass: header-only (no body line).
+        first_content = llm_service.categorize_email.call_args_list[0][0][0]
+        assert "Series A" not in first_content
+        # Second pass: body head included (only the first 3 lines).
+        second_content = llm_service.categorize_email.call_args_list[1][0][0]
+        assert "We are a Series A stealth startup" in second_content
+        assert "Are you open to a brief chat?" not in second_content
+        assert pipeline_context_no_test_mode.metrics["transform_escalation_second_pass"] == 1
+
+    def test_no_escalation_when_first_pass_is_not_main(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        llm_service.categorize_email.return_value = ("marketing", "bulk promo")
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "marketing"
+        assert llm_service.categorize_email.call_count == 1
+        assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
+
+    def test_no_escalation_for_freemail_sender(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        llm_service.categorize_email.return_value = ("main", "personal")
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute(
+            [self._email(sender="Jake Miles <jacob.miles@gmail.com>")],
+            pipeline_context_no_test_mode,
+        )
+
+        assert enriched[0].category == "main"
+        assert llm_service.categorize_email.call_count == 1
+        assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
+
+    def test_no_escalation_when_disabled(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = False
+        llm_service.categorize_email.return_value = ("main", "personal")
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "main"
+        assert llm_service.categorize_email.call_count == 1
+        assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
+
+    def test_no_escalation_for_sender_rule_shortcut_hit(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.sender_rules = {"thalolabs.com": "main"}
+        pipeline_config.transform.escalation.enabled = True
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "main"
+        llm_service.categorize_email.assert_not_called()
+        assert pipeline_context_no_test_mode.metrics["transform_sender_shortcut"] == 1
+
+    def test_no_escalation_without_body(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        llm_service.categorize_email.return_value = ("main", "personal")
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute(
+            [self._email(content="   ")], pipeline_context_no_test_mode
+        )
+
+        assert enriched[0].category == "main"
+        assert llm_service.categorize_email.call_count == 1
+
+    def test_at_most_one_escalation_per_email(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """Even if the second pass returns `main` again, no further escalation."""
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        llm_service.categorize_email.side_effect = [("main", "a"), ("main", "b")]
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "main"
+        assert llm_service.categorize_email.call_count == 2
+        assert pipeline_context_no_test_mode.metrics["transform_escalation_second_pass"] == 1
+
+    def test_escalated_result_is_validated(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """An out-of-vocabulary escalated category falls back to main like any other."""
+        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        pipeline_config.transform.escalation.enabled = True
+        llm_service.categorize_email.side_effect = [("main", "a"), ("Bogus", "b")]
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "main"
 
 
 class TestLoadStage:

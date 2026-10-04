@@ -29,11 +29,26 @@ class ExtractConfig(BaseModel):
     max_results: Optional[int] = None
 
 
+class EscalationConfig(BaseModel):
+    """Tiered body escalation: a second LLM pass that adds body head.
+
+    Production classifies from headers alone (llm_body_mode=none), but cold
+    outreach is engineered to have no distinguishing headers — the tell-tale
+    cues (Series A, equity, "brief chat") live in the body. When the first pass
+    returns `main` for an unruled company-domain sender, re-classify once with
+    the first `body_head_lines` lines of the body included.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    body_head_lines: int = 10
+
+
 class TransformConfig(BaseModel):
     """Configuration for the Transform stage."""
 
     model_config = ConfigDict(extra="forbid")
-
     llm_service: str = "openai"  # Options: "openai", "ollama"
     model: str = "gpt-4o-mini"
     temperature: float = 0.0  # Sampling temperature; 0 for deterministic classification
@@ -67,6 +82,7 @@ class TransformConfig(BaseModel):
     sender_rules_file: Optional[str] = None
     llm_body_mode: str = "none"  # Options: "none", "head", "full"
     llm_body_head_lines: int = 20  # used when llm_body_mode == "head"
+    escalation: EscalationConfig = EscalationConfig()
 
 
 GMAIL_TAB_LABEL_IDS = {
@@ -313,6 +329,10 @@ class PipelineConfig(BaseModel):
                     ),
                     "llm_body_mode": self.transform.llm_body_mode,
                     "llm_body_head_lines": self.transform.llm_body_head_lines,
+                    "escalation": {
+                        "enabled": self.transform.escalation.enabled,
+                        "body_head_lines": self.transform.escalation.body_head_lines,
+                    },
                 },
                 "load": {
                     "apply_labels": self.load.apply_labels,

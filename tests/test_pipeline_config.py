@@ -4,7 +4,12 @@ import os
 
 import pytest
 
-from email_labeler.pipeline.config import ConfigError, PipelineConfig, TransformConfig
+from email_labeler.pipeline.config import (
+    ConfigError,
+    EscalationConfig,
+    PipelineConfig,
+    TransformConfig,
+)
 
 
 class TestTransformConfigRoundTrip:
@@ -52,6 +57,34 @@ class TestTransformConfigRoundTrip:
         loaded = PipelineConfig.from_yaml(path)
 
         assert loaded.transform.llm_body_head_lines == 42
+
+    def test_escalation_round_trips(self, tmp_path):
+        config = PipelineConfig(
+            transform=TransformConfig(escalation=EscalationConfig(enabled=True, body_head_lines=7))
+        )
+        path = str(tmp_path / "config.yaml")
+        config.to_yaml(path)
+
+        loaded = PipelineConfig.from_yaml(path)
+
+        assert loaded.transform.escalation.enabled is True
+        assert loaded.transform.escalation.body_head_lines == 7
+
+    def test_escalation_defaults(self):
+        assert TransformConfig().escalation.enabled is True
+        assert TransformConfig().escalation.body_head_lines == 10
+
+    def test_escalation_unknown_key_rejected(self, tmp_path):
+        (tmp_path / "config.yaml").write_text(
+            "pipeline:\n"
+            "  transform:\n"
+            "    escalation:\n"
+            "      enabled: true\n"
+            "      body_head_line: 5\n"  # typo: missing 's'
+        )
+
+        with pytest.raises(ConfigError):
+            PipelineConfig.from_yaml(str(tmp_path / "config.yaml"))
 
     def test_sender_rules_file_is_loaded(self, tmp_path):
         """transform.sender_rules_file (relative to the config) supplies the rules."""
@@ -261,6 +294,11 @@ class TestColdOutreachConfig:
         prompt = prod_config.transform.user_prompt
         assert "Signals:" in prompt
         assert "ADVISORY" in prompt
+
+    def test_production_escalation_enabled(self, prod_config):
+        """Production runs header-only, so escalation must be on to see cold-mail bodies."""
+        assert prod_config.transform.escalation.enabled is True
+        assert prod_config.transform.escalation.body_head_lines >= 1
 
     def test_routing_skips_primary_tab(self, prod_config):
         """cold-outreach gets its own label and is archived (not left in Primary)."""
