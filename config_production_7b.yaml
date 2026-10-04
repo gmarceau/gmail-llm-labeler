@@ -53,7 +53,9 @@ pipeline:
     # Tiered escalation: when the header-only pass calls an unruled company-domain
     # sender `main`, re-classify once with the body head (where cold-outreach cues
     # like "Series A", equity, "brief chat" live). Freemail senders and sender-rule
-    # hits are never escalated. Bodies are still fetched (see ExtractStage._needs_body).
+    # hits are never escalated, and escalation only fires when llm_body_mode=none
+    # (in head/full the first pass already sees more body, so it is inert there).
+    # Bodies are still fetched (see ExtractStage._needs_body).
     #
     # body_head_lines: 10 is deliberate. Recruiter/sales pitches front-load the cue —
     # the greeting, one or two lines with the hook ("Series A stealth startup backed

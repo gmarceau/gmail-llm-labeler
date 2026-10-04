@@ -40,6 +40,10 @@ class EscalationConfig(BaseModel):
     cues (Series A, equity, "brief chat") live in the body. When the first pass
     returns `main` for an unruled company-domain sender, re-classify once with
     the first `body_head_lines` lines of the body included.
+
+    Only fires in header-only mode (llm_body_mode=none): in head/full the first
+    pass already saw more body than the escalation pass would, so escalation
+    there adds no information and is inert.
     """
 
     model_config = ConfigDict(extra="forbid")
