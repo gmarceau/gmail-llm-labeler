@@ -575,6 +575,46 @@ class TestTransformStageSenderShortcut:
         assert pipeline_context_no_test_mode.metrics["transform_sender_shortcut"] == 1
         assert pipeline_context_no_test_mode.metrics["transform_llm_calls"] == 1
 
+    def test_cold_outreach_rule_routes_via_shortcut(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """Recruiter domains rule to cold-outreach, which must be a valid target."""
+        pipeline_config.transform.categories.append("cold-outreach")
+        pipeline_config.transform.sender_rules = {"ovise.com": "cold-outreach"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        email = EmailRecord(
+            id="e1",
+            subject="Strong Ivy League Forward Deployed Engineers for Arch",
+            sender="Danny Tomkins <danny@ovise.com>",
+            content="body",
+            received_date="2024-01-01T10:00:00Z",
+        )
+
+        enriched = stage.execute([email], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "cold-outreach"
+        assert enriched[0].explanation == "known sender: ovise.com"
+        llm_service.categorize_email.assert_not_called()
+
+    def test_cold_outreach_rule_rejected_when_not_a_category(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """A cold-outreach rule is inert unless the category is configured."""
+        pipeline_config.transform.categories.remove("Marketing") if "Marketing" in pipeline_config.transform.categories else None
+        pipeline_config.transform.sender_rules = {"ovise.com": "cold-outreach"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        email = EmailRecord(
+            id="e1", subject="x", sender="danny@ovise.com",
+            content="b", received_date="2024-01-01T10:00:00Z",
+        )
+
+        stage.execute([email], pipeline_context_no_test_mode)
+
+        # No cold-outreach category configured -> falls through to the LLM.
+        llm_service.categorize_email.assert_called_once()
+
 
 class TestTransformStageBodyMode:
     """Unknown-sender LLM input is header-first; body inclusion is gated by llm_body_mode."""
@@ -1075,3 +1115,58 @@ class TestSyncStage:
 
         # Should have tracked metrics for each result
         assert mock_metrics_tracker.add_result.call_count == 3
+
+
+class TestColdOutreachLoadRouting:
+    """cold-outreach gets its own label and is archived out of the inbox."""
+
+    def _email(self, category="cold-outreach"):
+        return EnrichedEmailRecord(
+            id="msg1",
+            subject="Engineering Director Opportunity in NYC",
+            sender="Tony Svare <tony@byrecruiting.com>",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category=category,
+            explanation="cold outreach",
+            confidence=1.0,
+            processing_time=1.0,
+        )
+
+    def test_cold_outreach_applies_label_and_archives(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """category_actions for cold-outreach = apply_label + archive (no tab action)."""
+        pipeline_config.load.category_actions = {"cold-outreach": ["apply_label", "archive"]}
+        pipeline_config.load.default_actions = ["apply_label", "apply_category_tab"]
+        pipeline_config.load.category_tab_map = {"cold-outreach": "updates"}
+        mock_email_processor.get_or_create_label.return_value = "Label_cold"
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        results = stage.execute([self._email()], pipeline_context)
+
+        assert results[0].success
+        assert "apply_label" in results[0].actions_taken
+        assert "archive" in results[0].actions_taken
+        # archive = pulled from inbox so it never competes in the Primary tab
+        mock_email_processor.remove_from_inbox.assert_called_once_with("msg1")
+
+    def test_cold_outreach_never_maps_to_primary_tab(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """Even if a tab action ran, cold-outreach must not map to the primary tab."""
+        pipeline_config.load.category_actions = {}  # fall back to default_actions
+        pipeline_config.load.default_actions = ["apply_category_tab"]
+        pipeline_config.load.category_tab_map = {"cold-outreach": "updates"}
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        with patch(
+            "email_labeler.pipeline.load_stage.add_labels_to_email", return_value=True
+        ) as mock_add:
+            results = stage.execute([self._email()], pipeline_context)
+
+        assert results[0].success
+        # CATEGORY_UPDATES, never CATEGORY_PERSONAL (primary)
+        mock_add.assert_called_once_with(
+            mock_email_processor.gmail, "msg1", ["CATEGORY_UPDATES"]
+        )

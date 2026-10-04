@@ -22,7 +22,7 @@ pipeline:
 
   extract:
     source: "gmail"
-    gmail_query: "in:inbox -label:CHAOC -label:paton-family -label:main -label:marketing -label:newsletter -label:transaction"
+    gmail_query: "in:inbox -label:CHAOC -label:paton-family -label:main -label:marketing -label:newsletter -label:transaction -label:cold-outreach"
     batch_size: 10
     max_results: 500
 
@@ -39,6 +39,7 @@ pipeline:
       - "transaction"
       - "newsletter"
       - "marketing"
+      - "cold-outreach"
       - "main"
 
     # Known senders skip the LLM entirely. The reviewed sender_rules and personal_domains
@@ -68,12 +69,19 @@ pipeline:
                 - Product updates from services I have an account with
                 - Usually carries bulk-mail headers (List-Unsubscribe, List-Id, Precedence: bulk/list)
 
-      marketing: Mass marketing emails, promotional content, overly eager call to action, customer engagement, surveys. Often carries bulk-mail headers (List-Unsubscribe, List-Id, Feedback-Id).
-                - Recruiter and sales outreach: cold emails pitching a job opening, candidacy, product, or partnership, even when personalized and addressed to me by name. NOT transaction (I did not take an action that triggered it) and NOT main (it is solicitation, not personal correspondence).
+      marketing: Mass marketing emails, promotional content, overly eager call to action, customer engagement, surveys. Opted-in bulk promotional mail from services, stores, or organizations I have a relationship with (or that bought my address). Often carries bulk-mail headers (List-Unsubscribe, List-Id, Feedback-Id).
                 - meetup.com emails ARE marketing when they announce/recommend NEW events I have NOT registered for (group digests, "events for you", new event announcements).
-                - Cold outreach from an unfamiliar company/organization domain (i.e. NOT a personal freemail address like gmail.com) using a casual scheduling subject line — e.g. "Guillaume <> Duet", "Quick chat?", "Intro call".
+                - Product announcements, discounts, sales, newsletters-as-promotion from known or unknown brands.
+                - NOT cold-outreach: if the mail is an unsolicited pitch to ME personally (recruiter offering me a job, agency pitching their candidates/services, a founder pitching a partnership), it is cold-outreach even when personalized and bulk-looking.
 
-      main: Personal, one-on-one correspondence from an actual person — friends, family, colleagues, or my wife Linnea Paton. Typically from a personal freemail address (gmail.com and similar) or an individual's own address, with NO bulk-mail headers (no List-Unsubscribe/List-Id/Feedback-Id/Precedence: bulk). NOT automated, NOT from organizations/companies. NOT broadcast content (no podcasts, newsletters, mass announcements). NOT a company-domain solicitation or scheduling pitch
+      cold-outreach: Unsolicited solicitation sent TO me by an individual at an unfamiliar company/org domain (NOT a personal freemail address like gmail.com), pitching a job, my candidacy, their product, or a partnership — even when personalized by name and well-researched. I never opted in and took no action that triggered it.
+                - Recruiter outreach: "I came across your background", "love your background", "an opportunity that made me think of you", "are you open to a brief chat", "head of eng at a series A startup", "backed by <VC>", comp/equity/funding details, "I offer a $5k referral bonus", "Senior/Staff/Lead/Head of/VPE ... Opportunity".
+                - Sales/BD outreach: pitching engineers, agencies, or services TO my company (e.g. "I have Ivy League Forward Deployed Engineers for Arch"), or a founder pitching a partnership.
+                - "Re:"/"Fwd:" on a cold thread does NOT make it personal — recruiters reuse subject lines. Judge by whether it is solicitation from an unfamiliar company domain.
+                - NOT main: friends/colleagues/wife forwarding a job lead or replying on a thread from their personal address STAY main. A recruiter writing the same subject from a company domain is cold-outreach, not main.
+                - NOT marketing: marketing is opted-in bulk promotion from brands; cold-outreach is one-off targeted solicitation from a person at a company.
+
+      main: Personal, one-on-one correspondence from an actual person — friends, family, colleagues, or my wife Linnea Paton. Typically from a personal freemail address (gmail.com and similar) or an individual's own address I recognize, with NO bulk-mail headers (no List-Unsubscribe/List-Id/Feedback-Id/Precedence: bulk). NOT automated, NOT from organizations/companies. NOT broadcast content (no podcasts, newsletters, mass announcements). NOT a company-domain solicitation (that is cold-outreach). A friend's or colleague's personal forward of a job listing is main; a recruiter's own pitch from a company domain is cold-outreach.
 
 
       ---
@@ -82,14 +90,14 @@ pipeline:
 
       ---
       CRITICAL RULES
-      1. ONLY use EXACT on of the 4 categories: transaction, newsletter, marketing, main
+      1. ONLY use EXACT one of the 5 categories: transaction, newsletter, marketing, cold-outreach, main
       2. DO NOT invent new categories
-      3. If unsure, choose the closest match from the 4 categories above
+      3. If unsure, choose the closest match from the 5 categories above
 
 
       Respond ONLY with valid JSON:
       {{
-          "category": "<category>", // MUST be exactly: transaction, newsletter, marketing, or main
+          "category": "<category>", // MUST be exactly: transaction, newsletter, marketing, cold-outreach, or main
           "explanation": <a few words explaining the choice>"
       }}
 
@@ -99,6 +107,15 @@ pipeline:
       newsletter: forums
       marketing: updates
       main: primary
+      cold-outreach: updates
+
+    # cold-outreach gets its own label and is pulled out of the inbox entirely
+    # (apply_label + archive), so recruiter/sales spam stops competing with real mail.
+    # Overrides default_actions for this category only.
+    category_actions:
+      cold-outreach:
+        - "apply_label"
+        - "archive"
 
     apply_labels: true
     create_missing_labels: true

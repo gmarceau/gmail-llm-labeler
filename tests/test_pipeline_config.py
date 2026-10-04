@@ -215,3 +215,67 @@ class TestConfigValidation:
         assert loaded.transform.llm_body_mode == "none"
         assert loaded.transform.sender_rules_file == "sender_rules_production_7b.yaml"
         assert len(loaded.transform.sender_rules) > 0
+
+
+class TestColdOutreachConfig:
+    """cold-outreach category, prompt, and routing in the production config."""
+
+    @pytest.fixture
+    def prod_config(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return PipelineConfig.from_yaml(os.path.join(root, "config_production_7b.yaml"))
+
+    def test_category_present(self, prod_config):
+        assert "cold-outreach" in prod_config.transform.categories
+
+    def test_prompt_mentions_all_five_categories(self, prod_config):
+        prompt = prod_config.transform.user_prompt
+        for cat in prod_config.transform.categories:
+            assert cat in prompt
+        # The CRITICAL RULES header must advertise five, not four.
+        assert "5 categories" in prompt
+
+    def test_prompt_category_definitions_are_consistently_indented(self, prod_config):
+        """All `<category>:` definition lines share one indentation level.
+
+        The prompt is a YAML literal block, so indentation is preserved verbatim
+        into the model input; inconsistent indentation silently mangles it.
+        """
+        prompt = prod_config.transform.user_prompt
+        cats = prod_config.transform.categories
+        indents = {
+            len(line) - len(line.lstrip())
+            for line in prompt.splitlines()
+            if line.lstrip().startswith(tuple(f"{c}:" for c in cats))
+        }
+        assert len(indents) == 1, f"category definitions indented inconsistently: {indents}"
+
+    def test_prompt_has_no_whitespace_only_lines(self, prod_config):
+        """No line should be non-empty whitespace (a sign of a botched block edit)."""
+        bad = [i for i, line in enumerate(prod_config.transform.user_prompt.splitlines())
+               if line != "" and line.strip() == ""]
+        assert bad == [], f"whitespace-only prompt lines at: {bad}"
+
+    def test_routing_skips_primary_tab(self, prod_config):
+        """cold-outreach gets its own label and is archived (not left in Primary)."""
+        assert prod_config.load.category_tab_map.get("cold-outreach") != "primary"
+        actions = prod_config.load.category_actions.get("cold-outreach", [])
+        assert "apply_label" in actions
+        assert "archive" in actions
+
+    def test_extract_query_excludes_cold_outreach_label(self, prod_config):
+        assert "-label:cold-outreach" in prod_config.extract.gmail_query
+
+    def test_sender_rules_use_cold_outreach_and_are_valid(self, prod_config):
+        """Recruiter domains route to cold-outreach; every rule value is a real category.
+
+        The rules live in `sender_rules_production_7b.yaml`, which is git-ignored (it
+        contains real addresses), so skip the value checks when it isn't present.
+        """
+        rules = prod_config.transform.sender_rules
+        if not rules:
+            pytest.skip("sender_rules_production_7b.yaml not present (git-ignored, local only)")
+        cold = [k for k, v in rules.items() if v == "cold-outreach"]
+        assert len(cold) > 0
+        invalid = {k: v for k, v in rules.items() if v not in prod_config.transform.categories}
+        assert invalid == {}
