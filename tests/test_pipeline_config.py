@@ -487,11 +487,13 @@ class TestColdOutreachConfig:
         """Recruiter domains route to cold-outreach; every rule value is a real category.
 
         The rules live in `sender_rules_production_7b.yaml`, which is git-ignored (it
-        contains real addresses), so skip the value checks when it isn't present.
+        contains real addresses). A MISSING file is a fatal ConfigError from
+        from_yaml, so the prod_config fixture already errors in that case; this skip
+        only covers the file being present but empty.
         """
         rules = prod_config.transform.sender_rules
         if not rules:
-            pytest.skip("sender_rules_production_7b.yaml not present (git-ignored, local only)")
+            pytest.skip("sender_rules_production_7b.yaml is present but empty")
         cold = [k for k, v in rules.items() if v == "cold-outreach"]
         assert len(cold) > 0
         invalid = {k: v for k, v in rules.items() if v not in prod_config.transform.categories}

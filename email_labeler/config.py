@@ -7,6 +7,7 @@ from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict
 
 # Load environment variables
 load_dotenv()
@@ -45,6 +46,24 @@ def get_default_log_dir() -> Path:
     return get_default_data_dir() / "logs"
 
 
+class PathsConfig(BaseModel):
+    """Schema for the top-level `paths:` block of a config file.
+
+    Single source of truth for the set of configurable path keys: PathConfig
+    below resolves each of these fields to a concrete absolute path, and
+    PipelineConfig.from_yaml validates the block against this model so a
+    typo'd key fails fast at boot instead of being silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    database_file: Optional[str] = None
+    llm_log_file: Optional[str] = None
+    error_log_file: Optional[str] = None
+    test_output_file: Optional[str] = None
+    test_summary_file: Optional[str] = None
+
+
 class PathConfig:
     """Manages configurable file paths for the application.
 
@@ -53,9 +72,23 @@ class PathConfig:
     2. YAML configuration file
     3. Default values
 
-    All paths are resolved to absolute paths and parent directories
-    are created automatically if they don't exist.
+    The set of path keys is owned by PathsConfig.model_fields (the `paths:`
+    block schema above); this class resolves each of those keys to an absolute
+    path — the env var named KEY.upper() wins, then the YAML value, then the
+    per-key default. Parent directories are created automatically if they
+    don't exist.
     """
+
+    # Default (directory, filename) per path key, keyed by PathsConfig field name.
+    # PathsConfig owns the KEY SET; this table only supplies each key's default
+    # location. A key added to PathsConfig but missing here fails loudly (KeyError).
+    _DEFAULT_LOCATIONS = {
+        "database_file": ("data", "email_pipeline.db"),
+        "llm_log_file": ("logs", "llm_interactions.json"),
+        "error_log_file": ("logs", "categorization_errors.log"),
+        "test_output_file": ("data", "test_results.csv"),
+        "test_summary_file": ("data", "test_summary.json"),
+    }
 
     def __init__(self, config_file: Optional[str] = None):
         """Initialize path configuration.
@@ -71,39 +104,23 @@ class PathConfig:
                 yaml_paths = data.get("paths", {})
 
         # Get default directories
-        default_data_dir = get_default_data_dir()
-        default_log_dir = get_default_log_dir()
+        default_dirs = {
+            "data": get_default_data_dir(),
+            "logs": get_default_log_dir(),
+        }
 
         # Configure paths with priority: env var > yaml > default
-        self.database_file = self._resolve_path(
-            os.getenv("DATABASE_FILE"),
-            yaml_paths.get("database_file"),
-            default_data_dir / "email_pipeline.db",
-        )
-
-        self.llm_log_file = self._resolve_path(
-            os.getenv("LLM_LOG_FILE"),
-            yaml_paths.get("llm_log_file"),
-            default_log_dir / "llm_interactions.json",
-        )
-
-        self.error_log_file = self._resolve_path(
-            os.getenv("ERROR_LOG_FILE"),
-            yaml_paths.get("error_log_file"),
-            default_log_dir / "categorization_errors.log",
-        )
-
-        self.test_output_file = self._resolve_path(
-            os.getenv("TEST_OUTPUT_FILE"),
-            yaml_paths.get("test_output_file"),
-            default_data_dir / "test_results.csv",
-        )
-
-        self.test_summary_file = self._resolve_path(
-            os.getenv("TEST_SUMMARY_FILE"),
-            yaml_paths.get("test_summary_file"),
-            default_data_dir / "test_summary.json",
-        )
+        for key in PathsConfig.model_fields:
+            default_dir, default_file = self._DEFAULT_LOCATIONS[key]
+            setattr(
+                self,
+                key,
+                self._resolve_path(
+                    os.getenv(key.upper()),
+                    yaml_paths.get(key),
+                    default_dirs[default_dir] / default_file,
+                ),
+            )
 
         # Create directories if they don't exist
         self._ensure_directories()
@@ -130,14 +147,8 @@ class PathConfig:
 
     def _ensure_directories(self):
         """Create parent directories for all configured paths if they don't exist."""
-        for path_attr in [
-            "database_file",
-            "llm_log_file",
-            "error_log_file",
-            "test_output_file",
-            "test_summary_file",
-        ]:
-            path = getattr(self, path_attr)
+        for key in PathsConfig.model_fields:
+            path = getattr(self, key)
             path.parent.mkdir(parents=True, exist_ok=True)
 
     def to_dict(self) -> dict:
@@ -146,13 +157,7 @@ class PathConfig:
         Returns:
             Dictionary of path configurations as strings
         """
-        return {
-            "database_file": str(self.database_file),
-            "llm_log_file": str(self.llm_log_file),
-            "error_log_file": str(self.error_log_file),
-            "test_output_file": str(self.test_output_file),
-            "test_summary_file": str(self.test_summary_file),
-        }
+        return {key: str(getattr(self, key)) for key in PathsConfig.model_fields}
 
 
 # Initialize path configuration

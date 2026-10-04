@@ -13,6 +13,8 @@ from typing import Dict, List, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ..config import PathsConfig
+
 
 class ConfigError(ValueError):
     """Raised when a pipeline config file is missing, malformed, or has unknown keys
@@ -140,30 +142,16 @@ class MonitoringConfig(BaseModel):
     enable_tracing: bool = False
 
 
-class PathsConfig(BaseModel):
-    """Top-level `paths:` block, consumed by email_labeler.config.PathConfig.
-
-    Validated here too so a typo in a path key fails fast at boot rather than
-    being silently ignored by PathConfig's ``yaml_paths.get(...)`` lookups.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    database_file: Optional[str] = None
-    llm_log_file: Optional[str] = None
-    error_log_file: Optional[str] = None
-    test_output_file: Optional[str] = None
-    test_summary_file: Optional[str] = None
-
-
 class TopLevelConfig(BaseModel):
     """Top level of a config file: a `pipeline:` mapping and a `paths:` block.
 
     Unknown top-level keys are rejected here (extra="forbid") and the `paths:`
-    block is validated by the nested PathsConfig. The `pipeline` mapping is
-    validated next by PipelineConfig itself: its own extra="forbid" rejects
-    unknown pipeline keys, so no hand-maintained allowlist of pipeline keys
-    (which would have to track the model fields in lockstep) is needed.
+    block is validated by the nested PathsConfig model (owned by
+    email_labeler.config, beside its consumer PathConfig). The `pipeline`
+    mapping is validated next by PipelineConfig itself: its own
+    extra="forbid" rejects unknown pipeline keys, so no hand-maintained
+    allowlist of pipeline keys (which would have to track the model fields
+    in lockstep) is needed.
     """
 
     model_config = ConfigDict(extra="forbid")
