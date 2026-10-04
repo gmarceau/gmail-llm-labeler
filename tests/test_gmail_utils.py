@@ -1,9 +1,11 @@
 """Tests for gmail_utils functions."""
 
 from email_labeler.gmail_utils import (
+    compute_sender_signals,
     extract_address,
     extract_domain,
     format_classification_headers,
+    format_signals_block,
     strip_reply_prefix,
 )
 
@@ -107,4 +109,126 @@ class TestFormatClassificationHeaders:
     def test_omits_headers_with_empty_value(self):
         result = format_classification_headers({"list-id": "<x>", "sender": ""})
         assert result == "List-Id: <x>"
+
+
+class TestComputeSenderSignals:
+    """Deterministic advisory signals injected for header-poor cold mail."""
+
+    def _signals(self, **overrides):
+        defaults = dict(
+            sender="Danny Tomkins <danny@ovise.com>",
+            subject="An opportunity that made me think of you",
+            headers={},
+            sender_rules={},
+            personal_domains=["gmail.com", "hotmail.com"],
+        )
+        defaults.update(overrides)
+        return compute_sender_signals(**defaults)
+
+    def test_company_domain_is_flagged(self):
+        signals = self._signals()
+        assert any("company domain" in s for s in signals)
+
+    def test_freemail_sender_flagged_as_personal(self):
+        signals = self._signals(sender="Jake Miles <jacob.miles@gmail.com>")
+        assert any("personal/freemail" in s for s in signals)
+        assert not any("company domain" in s for s in signals)
+
+    def test_domain_absent_from_rules_flagged(self):
+        assert any("no known-sender rule" in s for s in self._signals())
+
+    def test_known_domain_not_flagged_as_unruled(self):
+        signals = self._signals(sender_rules={"ovise.com": "cold-outreach"})
+        assert not any("no known-sender rule" in s for s in signals)
+
+    def test_domain_lexicon_hit(self):
+        signals = self._signals(sender="A <recruiter@get-rockstar-hiring-ai.com>")
+        hit = [s for s in signals if "recruiting/GTM words" in s]
+        assert hit and "hiring" in hit[0]
+
+    def test_gtm_domain_lexicon_hit(self):
+        signals = self._signals(sender="A <a@unifygtm.com>")
+        assert any("recruiting/GTM words" in s and "gtm" in s for s in signals)
+
+    def test_no_domain_lexicon_hit_for_ordinary_domain(self):
+        signals = self._signals(sender="A <a@jupitered.com>")
+        assert not any("recruiting/GTM words" in s for s in signals)
+
+    def test_return_path_plus_bounce(self):
+        signals = self._signals(
+            headers={"return-path": "<chris+bounce@sterlingstrand.com>"}
+        )
+        assert any("plus-tag" in s for s in signals)
+
+    def test_return_path_srs0_rewrite(self):
+        signals = self._signals(
+            headers={"return-path": "<SRS0=abc=de=gmarceau.qc.ca=danny@ovise.com>"}
+        )
+        assert any("SRS0=" in s for s in signals)
+
+    def test_return_path_domain_differs_from_from_domain(self):
+        signals = self._signals(
+            headers={"return-path": "<bounces@mailer.example.net>"}
+        )
+        assert any("differs from the From domain" in s for s in signals)
+
+    def test_return_path_same_domain_not_flagged(self):
+        signals = self._signals(
+            sender="A <danny@ovise.com>",
+            headers={"return-path": "<danny@ovise.com>"},
+        )
+        assert not any("differs from the From domain" in s for s in signals)
+
+    def test_subject_lexicon_opportunity(self):
+        assert any("outreach phrases" in s and "opportunit" in s for s in self._signals())
+
+    def test_subject_lexicon_series_round(self):
+        signals = self._signals(subject="Join our Series B stealth startup")
+        hit = [s for s in signals if "outreach phrases" in s]
+        assert hit and "series <funding round>" in hit[0] and "stealth" in hit[0]
+
+    def test_subject_lexicon_angle_brackets(self):
+        signals = self._signals(subject="Guillaume <> Arch")
+        assert any("outreach phrases" in s and "<>" in s for s in signals)
+
+    def test_reply_prefix_stripped_before_subject_match(self):
+        signals = self._signals(subject="Re: Fwd: love your background!")
+        assert any("love your background" in s for s in signals)
+
+    def test_personal_sender_with_no_outreach_markers(self):
+        # A freemail sender with a plain subject and a matching return-path produces
+        # no outreach markers (only structural domain facts).
+        signals = self._signals(
+            sender="Linnea <linnea@gmail.com>",
+            subject="dinner tonight?",
+            headers={"return-path": "<linnea@gmail.com>"},
+        )
+        assert any("personal/freemail" in s for s in signals)
+        assert not any("outreach phrases" in s for s in signals)
+        assert not any("plus-tag" in s for s in signals)
+        assert not any("differs from the From domain" in s for s in signals)
+        assert not any("recruiting/GTM words" in s for s in signals)
+
+    def test_known_personal_domain_not_flagged_as_unruled(self):
+        signals = self._signals(
+            sender="Linnea <linnea@gmail.com>",
+            subject="dinner tonight?",
+            headers={"return-path": "<linnea@gmail.com>"},
+            sender_rules={"gmail.com": "Personal"},
+        )
+        assert not any("no known-sender rule" in s for s in signals)
+
+    def test_all_signals_are_strings(self):
+        assert all(isinstance(s, str) for s in self._signals())
+
+
+class TestFormatSignalsBlock:
+    def test_empty_list_yields_empty_string(self):
+        assert format_signals_block([]) == ""
+
+    def test_renders_label_and_bullets(self):
+        block = format_signals_block(["one fact", "two facts"])
+        assert block.startswith("Signals (")
+        assert "- one fact" in block
+        assert "- two facts" in block
 

@@ -342,6 +342,115 @@ def get_email_content(
         raise
 
 
+# --- Deterministic sender/subject signals -----------------------------------
+#
+# Half the stored emails are header-poor (only a return-path), so a header-based
+# judgment often runs on sender+subject alone. These signals are computed locally
+# and injected as a compact "Signals:" block of FACTS for the LLM to weigh. They
+# are advisory only — the LLM stays the judge — because company domains are not
+# proof of solicitation (school, building mgmt, therapist, utility mail all come
+# from company domains and legitimately belong in `main`).
+
+# Domain-name lexicon: a company domain whose label contains one of these is
+# suggestive of a recruiting/GTM/agency operation (e.g. get-rockstar-hiring-ai.com,
+# unifygtm.com). Substring match against the registered-domain label.
+_DOMAIN_LEXICON = ("hiring", "talent", "recruit", "staffing", "careers", "jobs", "gtm")
+
+# Subject lexicon: phrases common in cold recruiter/sales outreach. Matched
+# case-insensitively against the reply-prefix-stripped subject.
+_SUBJECT_LEXICON = (
+    "opportunit",   # Opportunity / Opportunities
+    "love your background",
+    "backed by",
+    "stealth",
+    "brief chat",
+    "quick chat",
+    "intro call",
+)
+# Series A–F funding rounds ("Series A", "series C", "Series B round").
+_SUBJECT_SERIES_RE = re.compile(r"\bseries\s+[a-f]\b", re.IGNORECASE)
+
+
+def _extract_return_path_domain(return_path: str) -> str:
+    """Registered domain of a Return-Path header value, or "" if unparseable."""
+    return extract_domain(return_path)
+
+
+def compute_sender_signals(
+    sender: str,
+    subject: str,
+    headers: Dict[str, str],
+    sender_rules: Dict[str, str],
+    personal_domains: List[str],
+) -> List[str]:
+    """Compute deterministic, advisory signals about a sender/subject.
+
+    Returns a list of short human-readable fact strings (may be empty). These are
+    the raw observations; ``format_signals_block`` renders them for the prompt.
+    Pure function: no I/O, no config objects.
+    """
+    signals: List[str] = []
+
+    sender_domain = extract_domain(sender)
+    is_freemail = bool(sender_domain) and sender_domain in personal_domains
+
+    # (1) Company domain vs personal/freemail.
+    if sender_domain:
+        if is_freemail:
+            signals.append(f"sender domain {sender_domain} is a personal/freemail domain")
+        else:
+            signals.append(f"sender domain {sender_domain} is a company domain (not a freemail address)")
+
+    # (2) Domain absent from known-sender rules.
+    if sender_domain and sender_domain not in sender_rules:
+        signals.append(f"sender domain {sender_domain} has no known-sender rule")
+
+    # (3) Domain-name lexicon hits.
+    if sender_domain:
+        label = sender_domain.split(".")[0]
+        hits = [word for word in _DOMAIN_LEXICON if word in label]
+        if hits:
+            signals.append(f"sender domain name contains recruiting/GTM words: {', '.join(hits)}")
+
+    # (4) Return-path tells.
+    return_path = headers.get("return-path", "")
+    if return_path:
+        rp_address = extract_address(return_path)
+        local_part = rp_address.split("@")[0] if rp_address else ""
+        if "+bounce" in local_part or "+" in local_part:
+            signals.append(f"return-path carries a plus-tag ({rp_address}) indicating bulk bounce handling")
+        if "srs0=" in return_path.lower():
+            signals.append("return-path was rewritten by a forwarder (SRS0=), so the true sender is masked")
+        rp_domain = _extract_return_path_domain(return_path)
+        if rp_domain and sender_domain and rp_domain != sender_domain:
+            signals.append(
+                f"return-path domain {rp_domain} differs from the From domain {sender_domain}"
+            )
+
+    # (5) Subject lexicon hits.
+    subject_text = strip_reply_prefix(subject or "")
+    subject_hits = [phrase for phrase in _SUBJECT_LEXICON if phrase in subject_text.lower()]
+    if _SUBJECT_SERIES_RE.search(subject_text):
+        subject_hits.append("series <funding round>")
+    if "<>" in subject_text:
+        subject_hits.append("<>")
+    if subject_hits:
+        signals.append(f"subject contains outreach phrases: {', '.join(subject_hits)}")
+
+    return signals
+
+
+def format_signals_block(signals: List[str]) -> str:
+    """Render signals as a compact, clearly-labelled advisory block for the prompt.
+
+    Returns "" for an empty list so callers can append unconditionally.
+    """
+    if not signals:
+        return ""
+    lines = "\n".join(f"- {signal}" for signal in signals)
+    return f"Signals (deterministic facts, advisory only — not decisive):\n{lines}"
+
+
 def get_or_create_label(
     gmail: Resource,
     label_name: str,

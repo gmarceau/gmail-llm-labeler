@@ -676,6 +676,63 @@ class TestTransformStageBodyMode:
         assert "Unsubscribe here" in email_content
 
 
+class TestTransformStageSignalsInjection:
+    """Signals are injected for unruled company-domain senders only."""
+
+    def _email(self, **overrides):
+        defaults = dict(
+            id="e1",
+            subject="An opportunity that made me think of you",
+            sender="Danny Tomkins <danny@ovise.com>",
+            content="body",
+            received_date="2024-01-01T10:00:00Z",
+            headers={},
+        )
+        defaults.update(overrides)
+        return EmailRecord(**defaults)
+
+    def test_signals_injected_for_unruled_company_domain(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "Signals (" in email_content
+        assert "company domain" in email_content
+        assert pipeline_context_no_test_mode.metrics["transform_signals_injected"] == 1
+
+    def test_no_signals_for_freemail_sender(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.sender_rules = {}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute(
+            [self._email(sender="Jake Miles <jacob.miles@gmail.com>")],
+            pipeline_context_no_test_mode,
+        )
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "Signals (" not in email_content
+        assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
+
+    def test_no_signals_for_sender_rule_shortcut_hit(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        pipeline_config.transform.sender_rules = {"ovise.com": "Marketing"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        assert enriched[0].category == "Marketing"
+        llm_service.categorize_email.assert_not_called()
+
+
 class TestLoadStage:
     """Test cases for LoadStage."""
 

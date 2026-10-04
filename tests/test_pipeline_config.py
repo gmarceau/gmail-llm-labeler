@@ -256,6 +256,12 @@ class TestColdOutreachConfig:
                if line != "" and line.strip() == ""]
         assert bad == [], f"whitespace-only prompt lines at: {bad}"
 
+    def test_prompt_explains_signals_block(self, prod_config):
+        """The prompt must describe the deterministic Signals block it may receive."""
+        prompt = prod_config.transform.user_prompt
+        assert "Signals:" in prompt
+        assert "ADVISORY" in prompt
+
     def test_routing_skips_primary_tab(self, prod_config):
         """cold-outreach gets its own label and is archived (not left in Primary)."""
         assert prod_config.load.category_tab_map.get("cold-outreach") != "primary"

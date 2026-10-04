@@ -7,9 +7,11 @@ from typing import Any, List, Optional
 from ..progress import SmartBar
 from ..email_processor import EmailProcessor
 from ..gmail_utils import (
+    compute_sender_signals,
     extract_address,
     extract_domain,
     format_classification_headers,
+    format_signals_block,
     strip_reply_prefix,
 )
 from ..llm_service import LLMService
@@ -129,6 +131,8 @@ class TransformStage(PipelineStage):
         context.increment_metric("transform_llm_calls")
 
         email_content = self._build_email_content(email)
+        if "Signals (" in email_content:
+            context.increment_metric("transform_signals_injected")
 
         if context.test_mode:
             # In test mode, use a mock categorization
@@ -190,10 +194,17 @@ class TransformStage(PipelineStage):
     def _build_email_content(self, email: EmailRecord) -> str:
         """Build the LLM input: header-first (no fixed rules — the LLM judges from
         headers directly), with body inclusion gated by llm_body_mode.
+
+        For header-poor mail a compact "Signals:" block of deterministic facts is
+        appended (advisory only — the LLM still judges). See _build_signals.
         """
         header_block = format_classification_headers(email.headers)
         subject = strip_reply_prefix(email.subject)
         email_content = f"Subject: {subject}\nFrom: {email.sender}\n{header_block}"
+
+        signals_block = self._build_signals(email)
+        if signals_block:
+            email_content += f"\n\n{signals_block}"
 
         body = ""
         if self.config.llm_body_mode == "head":
@@ -205,6 +216,25 @@ class TransformStage(PipelineStage):
         if body:
             email_content += f"\n\n{body}"
         return email_content
+
+    def _build_signals(self, email: EmailRecord) -> str:
+        """Deterministic advisory signals for the LLM, or "" when not applicable.
+
+        Only emails that would otherwise reach the LLM as unruled company-domain
+        mail get signals: sender-rule shortcut hits never reach here, and freemail/
+        personal senders are excluded (their mail is legitimately personal). This
+        keeps the block focused on the header-poor cold-mail case it was built for.
+        """
+        if extract_domain(email.sender) in self.config.personal_domains:
+            return ""
+        signals = compute_sender_signals(
+            sender=email.sender,
+            subject=email.subject,
+            headers=email.headers,
+            sender_rules=self.config.sender_rules,
+            personal_domains=self.config.personal_domains,
+        )
+        return format_signals_block(signals)
 
     def _smart_truncate(self, content: str) -> str:
         """Keep beginning + end to preserve footer (unsubscribe, signatures) when over length."""
