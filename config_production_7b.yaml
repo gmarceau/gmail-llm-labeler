@@ -54,6 +54,12 @@ pipeline:
     # sender `main`, re-classify once with the body head (where cold-outreach cues
     # like "Series A", equity, "brief chat" live). Freemail senders and sender-rule
     # hits are never escalated. Bodies are still fetched (see ExtractStage._needs_body).
+    #
+    # body_head_lines: 10 is deliberate. Recruiter/sales pitches front-load the cue —
+    # the greeting, one or two lines with the hook ("Series A stealth startup backed
+    # by …", "an opportunity that made me think of you", a referral bonus) — within the
+    # first ~5-8 lines; 10 gives margin without reaching the signature/legal footer,
+    # which adds only noise. Raise only if a real pitch is seen to bury the cue later.
     escalation:
       enabled: true
       body_head_lines: 10

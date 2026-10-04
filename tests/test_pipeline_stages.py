@@ -744,6 +744,46 @@ class TestTransformStageSignalsInjection:
         assert enriched[0].category == "Marketing"
         llm_service.categorize_email.assert_not_called()
 
+    def test_no_signals_for_ruled_address_that_falls_through(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """A sender whose *address* is ruled but whose rule category is invalid falls
+        through to the LLM (see _try_sender_shortcut). Signals must not reappear: the
+        user has already made a judgment about this sender.
+        """
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.categories = ["Marketing"]
+        # Address rule present but its category isn't configured -> shortcut declines.
+        pipeline_config.transform.sender_rules = {"danny@ovise.com": "cold-outreach"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute([self._email()], pipeline_context_no_test_mode)
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "Signals (" not in email_content
+        assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
+
+    def test_no_signals_for_ruled_company_domain_that_falls_through(
+        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+    ):
+        """An individual's own vanity domain (e.g. repucci.org: main) is a company
+        domain by the freemail test, but the user has already ruled it. No signals —
+        the 'no known-sender rule' / 'company domain' facts would be contradictory.
+        """
+        pipeline_config.transform.personal_domains = ["gmail.com"]
+        pipeline_config.transform.categories = ["Marketing"]
+        pipeline_config.transform.sender_rules = {"repucci.org": "main"}
+        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+
+        stage.execute(
+            [self._email(sender="Michael Repucci <michael@repucci.org>")],
+            pipeline_context_no_test_mode,
+        )
+
+        email_content = llm_service.categorize_email.call_args[0][0]
+        assert "Signals (" not in email_content
+        assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
+
 
 class TestTransformStageEscalation:
     """Tiered body escalation: re-classify borderline `main` with the body head."""

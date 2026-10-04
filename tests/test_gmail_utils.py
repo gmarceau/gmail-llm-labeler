@@ -150,9 +150,24 @@ class TestComputeSenderSignals:
         signals = self._signals(sender="A <a@unifygtm.com>")
         assert any("recruiting/GTM words" in s and "gtm" in s for s in signals)
 
+    def test_bare_gtm_domain_not_flagged(self):
+        # gtm.com alone is a mundane payroll vendor, not a GTM-agency domain; the
+        # suffix-only rule keeps it out while unifygtm.com still hits.
+        signals = self._signals(sender="A <a@gtm.com>")
+        assert not any("recruiting/GTM words" in s for s in signals)
+
     def test_no_domain_lexicon_hit_for_ordinary_domain(self):
         signals = self._signals(sender="A <a@jupitered.com>")
         assert not any("recruiting/GTM words" in s for s in signals)
+
+    def test_lexicon_hits_are_advisory_facts_not_verdicts(self):
+        # 0fa regression guard: a lexicon hit is a fact string, never a category.
+        # A legit school/building/utility mail must produce no outreach *verdict*,
+        # only structural observations, so the LLM still judges it main.
+        for domain in ("jupitered.com", "fsresidential.com", "ps20.org", "coned.com"):
+            signals = self._signals(sender=f"A <a@{domain}>", subject="Burns Night")
+            assert not any("recruiting/GTM words" in s for s in signals)
+            assert not any("outreach phrases" in s for s in signals)
 
     def test_return_path_plus_bounce(self):
         signals = self._signals(

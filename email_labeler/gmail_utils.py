@@ -354,7 +354,13 @@ def get_email_content(
 # Domain-name lexicon: a company domain whose label contains one of these is
 # suggestive of a recruiting/GTM/agency operation (e.g. get-rockstar-hiring-ai.com,
 # unifygtm.com). Substring match against the registered-domain label.
-_DOMAIN_LEXICON = ("hiring", "talent", "recruit", "staffing", "careers", "jobs", "gtm")
+#
+# Precision note (0fa): `gtm` is matched only as a *suffix* of a longer label, not as a
+# bare label — `gtm.com` alone is a mundane payroll vendor (already ruled transaction),
+# while `unifygtm.com`/`gtmhire.com` are the agency pattern we want. The other tokens
+# are distinctive enough that a bare-label match is fine (`talent.com`, `jobs.*`).
+_DOMAIN_LEXICON = ("hiring", "talent", "recruit", "staffing", "careers", "jobs")
+_DOMAIN_LEXICON_SUFFIXES = ("gtm",)
 
 # Subject lexicon: phrases common in cold recruiter/sales outreach. Matched
 # case-insensitively against the reply-prefix-stripped subject.
@@ -409,6 +415,13 @@ def compute_sender_signals(
     if sender_domain:
         label = sender_domain.split(".")[0]
         hits = [word for word in _DOMAIN_LEXICON if word in label]
+        # Suffix-only tokens (gtm) must extend a longer label, so the bare `gtm.com`
+        # payroll vendor is not swept in; `unifygtm.com` still is.
+        hits += [
+            suffix
+            for suffix in _DOMAIN_LEXICON_SUFFIXES
+            if label != suffix and label.endswith(suffix)
+        ]
         if hits:
             signals.append(f"sender domain name contains recruiting/GTM words: {', '.join(hits)}")
 

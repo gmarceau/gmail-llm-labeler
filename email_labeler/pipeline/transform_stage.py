@@ -268,8 +268,20 @@ class TransformStage(PipelineStage):
         mail get signals: sender-rule shortcut hits never reach here, and freemail/
         personal senders are excluded (their mail is legitimately personal). This
         keeps the block focused on the header-poor cold-mail case it was built for.
+
+        A sender the user has *already made a judgment about* is excluded too — an
+        address or domain with any sender_rules entry, not just a personal_domains
+        match. The signals exist to help the LLM on senders nobody has ruled on;
+        once a domain is ruled (e.g. repucci.org: main, an individual's own vanity
+        domain), re-deriving "no known-sender rule" / "company domain" facts about
+        it is noise at best and contradictory at worst.
         """
-        if extract_domain(email.sender) in self.config.personal_domains:
+        rules = self.config.sender_rules
+        if (
+            extract_domain(email.sender) in self.config.personal_domains
+            or extract_domain(email.sender) in rules
+            or extract_address(email.sender) in rules
+        ):
             return ""
         signals = compute_sender_signals(
             sender=email.sender,
