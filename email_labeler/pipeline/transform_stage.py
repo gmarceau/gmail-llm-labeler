@@ -330,19 +330,27 @@ class TransformStage(PipelineStage):
             + content[-keep_end:]
         )
 
+    # Base confidence per category, keyed by the PRODUCTION category names
+    # (transaction/newsletter/marketing/cold-outreach/main) — coupled to the
+    # configured category naming, like the escalation gate's "main" trigger:
+    # renaming a category means re-keying this table. Personal correspondence
+    # ("main") and transactional mail ("transaction") are the high-stakes tiers —
+    # missing either is costly — while the bulk categories sit at the neutral
+    # base. A configured category absent from the table (e.g. a dev config on
+    # the legacy capitalized defaults) gets the same neutral base.
+    _BASE_CONFIDENCE = {
+        "main": 0.9,
+        "transaction": 0.9,
+        "newsletter": 0.7,
+        "marketing": 0.7,
+        "cold-outreach": 0.7,
+    }
+
     def _calculate_confidence(self, category: str, explanation: str) -> float:
-        """Calculate confidence score for categorization."""
-        # Simple heuristic: longer explanations tend to be more confident
-        # Categories like "Other" or empty explanations get lower confidence
+        """Confidence score: a per-category base tier, nudged up by explanation length."""
+        base_confidence = self._BASE_CONFIDENCE.get(category, 0.7)
 
-        if category == "Other":
-            base_confidence = 0.5
-        elif category in ["Response Needed / High Priority", "Bills"]:
-            base_confidence = 0.9
-        else:
-            base_confidence = 0.7
-
-        # Adjust based on explanation length
+        # Longer explanations read as more considered verdicts (bump capped below)
         explanation_factor = min(len(explanation) / 200, 1.0) * 0.2
 
         confidence = min(base_confidence + explanation_factor, 1.0)

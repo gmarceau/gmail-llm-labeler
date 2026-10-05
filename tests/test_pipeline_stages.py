@@ -1130,6 +1130,57 @@ class TestTransformStageEscalation:
         assert enriched[0].category == "main"
 
 
+class TestCalculateConfidence:
+    """Confidence tiers are keyed by the production category names (bead 6yq):
+    every production category hits an intended base tier; only a category absent
+    from the table (e.g. a dev config on the legacy capitalized defaults) falls
+    back to the neutral base. The sender-rule shortcut stays at a flat 1.0."""
+
+    @pytest.fixture
+    def stage(self, llm_service, mock_email_processor, production_like_config):
+        return TransformStage(production_like_config.transform, llm_service, mock_email_processor)
+
+    @pytest.mark.parametrize(
+        ("category", "expected_base"),
+        [
+            ("main", 0.9),
+            ("transaction", 0.9),
+            ("newsletter", 0.7),
+            ("marketing", 0.7),
+            ("cold-outreach", 0.7),
+        ],
+    )
+    def test_production_category_hits_intended_tier(self, stage, category, expected_base):
+        # "" explanation: no length bump — the pure base tier
+        assert stage._calculate_confidence(category, "") == expected_base
+
+    def test_unkeyed_category_gets_neutral_base(self, stage):
+        assert stage._calculate_confidence("Bills", "") == 0.7
+
+    def test_longer_explanations_nudge_confidence_up(self, stage):
+        assert stage._calculate_confidence("main", "x" * 40) == 0.94  # 0.9 + 0.04
+        assert stage._calculate_confidence("newsletter", "x" * 100) == 0.8  # 0.7 + 0.1
+
+    def test_explanation_bump_is_capped_at_one(self, stage):
+        assert stage._calculate_confidence("main", "x" * 250) == 1.0  # 0.9 + 0.2, capped
+        assert stage._calculate_confidence("newsletter", "x" * 250) == 0.9  # 0.7 + 0.2
+
+    def test_shortcut_path_stays_at_full_confidence(
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
+    ):
+        """A sender-rule hit never consults the tiers: flat 1.0 regardless of category."""
+        production_like_config.transform.sender_rules = {"ovise.com": "marketing"}
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
+        email = EmailRecord(
+            id="e1", subject="x", sender="danny@ovise.com",
+            content="b", received_date="2024-01-01T10:00:00Z",
+        )
+
+        enriched = stage.execute([email], pipeline_context_no_test_mode)
+
+        assert enriched[0].confidence == 1.0
+
+
 class TestLoadStage:
     """Test cases for LoadStage."""
 
