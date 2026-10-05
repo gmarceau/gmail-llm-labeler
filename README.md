@@ -109,9 +109,12 @@ OPENAI_API_KEY=your_openai_api_key_here
 
 ### Option B: Using Ollama (Local)
 
+Select Ollama in your pipeline config (`transform.llm_service: ollama`,
+`transform.model: gpt-oss:20b` — see `examples/pipeline_config_local.yaml`).
+Only the endpoint is configured via `.env`:
+
 ```env
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=gpt-oss:20b
+OLLAMA_BASE_URL=http://localhost:11434/v1
 ```
 
 > **Note**: The `credentials.json` file handles Gmail authentication. You don't need to set `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` in `.env`.

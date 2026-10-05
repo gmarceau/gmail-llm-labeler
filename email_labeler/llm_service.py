@@ -12,13 +12,9 @@ from plumbum import local
 
 from .config import (
     ERROR_LOG_FILE,
-    GPT_OSS_REASONING,
     LLM_LOG_FILE,
-    LLM_SERVICE,
     OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
     OPENAI_API_KEY,
-    OPENAI_MODEL,
 )
 
 
@@ -49,6 +45,15 @@ Respond with a JSON object:
 }}"""
 
 
+# The two supported backends. Which one to call is pipeline config
+# (TransformConfig.llm_service -> LLMService(service=...)), not environment.
+_SUPPORTED_SERVICES = ("openai", "ollama")
+
+# Model used when the caller doesn't pass one. The pipeline always passes
+# config.transform.model; these defaults only serve standalone LLMService use.
+_DEFAULT_MODELS = {"openai": "gpt-4o-mini", "ollama": "llama3.1"}
+
+
 class LLMService:
     """Handles email categorization using LLM (OpenAI or Ollama)."""
 
@@ -58,6 +63,8 @@ class LLMService:
         max_content_length: int = 4000,
         llm_client: Optional[OpenAI] = None,
         model: Optional[str] = None,
+        service: str = "openai",
+        gpt_oss_reasoning: str = "medium",
         lazy_init: bool = False,
         system_prompt: Optional[str] = None,
         user_prompt: Optional[str] = None,
@@ -68,35 +75,42 @@ class LLMService:
         Args:
             categories: List of category labels for email classification.
             max_content_length: Maximum length of email content before truncation.
-            llm_client: Optional OpenAI client instance. If not provided, creates based on config.
-            model: Optional model name. If not provided, uses config defaults.
+            llm_client: Optional OpenAI client instance. If not provided, creates
+                one for the selected service at init (or at first use, if lazy).
+            model: Optional model name. If not provided, uses the per-service
+                default — the pipeline always passes config.transform.model.
+            service: Which backend to call: "openai" or "ollama" (case-insensitive).
+                Authoritative — comes from TransformConfig.llm_service in the pipeline.
+            gpt_oss_reasoning: Reasoning-effort level ("low"/"medium"/"high") rendered
+                into the default gpt-oss system prompt; unused with a custom
+                system_prompt. Mirrors TransformConfig.gpt_oss_reasoning.
             lazy_init: If True, delay LLM client initialization until first use.
             system_prompt: Optional custom system prompt with template support.
             user_prompt: Optional custom user prompt with template support.
+            temperature: Sampling temperature.
         """
+        service = service.lower()
+        if service not in _SUPPORTED_SERVICES:
+            raise ValueError(
+                f"Unknown LLM service {service!r}: expected one of {sorted(_SUPPORTED_SERVICES)}"
+            )
+        self.service = service
         self.categories = categories
         self.max_content_length = max_content_length
         self._lazy_init = lazy_init
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         self.temperature = temperature
-        self.llm_client: Optional[OpenAI]
-        if llm_client is not None:
-            self.llm_client = llm_client
-            self.model = model or (OLLAMA_MODEL if LLM_SERVICE == "Ollama" else OPENAI_MODEL)
-        elif not lazy_init:
+        self.gpt_oss_reasoning = gpt_oss_reasoning
+        self.model = model or _DEFAULT_MODELS[service]
+        self.llm_client: Optional[OpenAI] = llm_client
+        if self.llm_client is None and not lazy_init:
             self.llm_client = self._get_llm_client()
-            self.model = OLLAMA_MODEL if LLM_SERVICE == "Ollama" else OPENAI_MODEL
-        else:
-            self.llm_client = None
-            self.model = model or (OLLAMA_MODEL if LLM_SERVICE == "Ollama" else OPENAI_MODEL)
 
     def _ensure_llm_client(self):
         """Ensure LLM client is initialized (for lazy initialization)."""
         if self.llm_client is None and self._lazy_init:
             self.llm_client = self._get_llm_client()
-            if not self.model:
-                self.model = OLLAMA_MODEL if LLM_SERVICE == "Ollama" else OPENAI_MODEL
 
     def _ensure_ollama_running(self):
         """Start ollama serve if it's not already reachable."""
@@ -122,13 +136,13 @@ class LLMService:
         raise RuntimeError("Timed out waiting for ollama serve to start")
 
     def _get_llm_client(self) -> OpenAI:
-        """Get the appropriate LLM client based on configuration."""
-        if LLM_SERVICE == "Ollama":
+        """Get the client for the selected service (self.service)."""
+        if self.service == "ollama":
             self._ensure_ollama_running()
-            logging.debug(f"Using Ollama at {OLLAMA_BASE_URL} with model {OLLAMA_MODEL}")
+            logging.debug(f"Using Ollama at {OLLAMA_BASE_URL} with model {self.model}")
             return OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")  # Dummy key for Ollama
         else:
-            logging.info(f"Using OpenAI with model {OPENAI_MODEL}")
+            logging.info(f"Using OpenAI with model {self.model}")
             return OpenAI(api_key=OPENAI_API_KEY)
 
     def _render_template(self, template: str, variables: Dict[str, str]) -> str:
@@ -204,14 +218,14 @@ class LLMService:
         template_vars = {
             "categories": ", ".join(self.categories),
             "email_content": email_content,
-            "reasoning": GPT_OSS_REASONING,
+            "reasoning": self.gpt_oss_reasoning,
         }
 
         # Determine which system prompt to use
         if self.system_prompt:
             # Use custom system prompt
             system_content = self._render_template(self.system_prompt, template_vars)
-        elif LLM_SERVICE == "Ollama" and "gpt-oss" in self.model:
+        elif self.service == "ollama" and "gpt-oss" in self.model:
             # Use default GPT-OSS system prompt
             system_content = self._render_template(DEFAULT_SYSTEM_PROMPT_GPT_OSS, template_vars)
         else:
@@ -244,10 +258,10 @@ class LLMService:
         }
 
         # Add response_format for OpenAI (not supported by Ollama)
-        if LLM_SERVICE == "OpenAI":
+        if self.service == "openai":
             completion_kwargs["response_format"] = {"type": "json_object"}
 
-        logging.debug(f"Calling {LLM_SERVICE} API with model {self.model}")
+        logging.debug(f"Calling {self.service} API with model {self.model}")
         assert self.llm_client is not None, "LLM client must be initialized"
         response = self.llm_client.chat.completions.create(**completion_kwargs)  # type: ignore[call-overload]
 
@@ -299,7 +313,7 @@ class LLMService:
             "response_timestamp": end_time,
             "duration": end_time - start_time,
             "model": self.model,
-            "service": LLM_SERVICE,
+            "service": self.service,
             "response": response,
             "processed_email": email_content,
         }

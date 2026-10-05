@@ -8,9 +8,10 @@
 #
 # Environment variables you can set in .env:
 #   OLLAMA_BASE_URL=http://localhost:11434/v1
-#   OLLAMA_MODEL=gpt-oss
-#   GPT_OSS_REASONING=medium  # Options: low, medium, high
 #   LOG_LEVEL=INFO
+# (Service, model, and reasoning effort live in this file —
+#  transform.llm_service / model / gpt_oss_reasoning below — not the
+#  environment; env LLM variables only apply when running without a config.)
 
 # =============================================================================
 # File Paths Configuration (optional)
@@ -47,6 +48,7 @@ pipeline:
   transform:
     llm_service: "ollama"  # Using local Ollama instead of OpenAI
     model: "gpt-oss:20b"  # Your installed GPT-OSS 20B model
+    gpt_oss_reasoning: "medium"  # Reasoning effort for gpt-oss models: low, medium, high
     # Note: If you have a specific GPT-OSS version, specify it like:
     # model: "gpt-oss-qwen-2.5-32b"
     # model: "gpt-oss-llama-3.1-70b"

@@ -90,10 +90,15 @@ Example: If `DATABASE_FILE` is set in both `.env` and `config.yaml`, the `.env` 
 
 ### API Configuration
 - `OPENAI_API_KEY` - OpenAI API key (if using OpenAI)
-- `OLLAMA_HOST` - Ollama server URL (default: `http://localhost:11434`)
-- `OLLAMA_MODEL` - Ollama model name (e.g., `gpt-oss:20b`)
+- `OLLAMA_BASE_URL` - Ollama endpoint (default: `http://localhost:11434/v1`)
 - `GOOGLE_CLIENT_ID` - Gmail API client ID
 - `GOOGLE_CLIENT_SECRET` - Gmail API client secret
+
+Which LLM backend and model to call is pipeline config, not environment: the
+yaml `transform:` block's `llm_service`, `model`, and `gpt_oss_reasoning` are
+authoritative. The `LLM_SERVICE`, `OPENAI_MODEL`, `OLLAMA_MODEL`, and
+`GPT_OSS_REASONING` env vars are only read when running without a config file
+(the `from_env` fallback).
 
 ## Security Notes
 

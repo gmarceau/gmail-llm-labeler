@@ -2,8 +2,10 @@
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from email_labeler.config import (
     PathConfig,
@@ -11,6 +13,7 @@ from email_labeler.config import (
     get_default_data_dir,
     get_default_log_dir,
 )
+from email_labeler.llm_service import LLMService
 from email_labeler.pipeline.config import (
     ConfigError,
     EscalationConfig,
@@ -226,6 +229,23 @@ class TestConfigValidation:
         assert loaded.transform.llm_body_mode == "none"
         assert loaded.extract.source == "gmail"
         assert loaded.dry_run is False
+
+    def test_invalid_llm_service_rejected(self, tmp_path):
+        """The backend name is a closed vocabulary: a typo fails at load (bead 3zj)."""
+        path = self._write(tmp_path, "pipeline:\n  transform:\n    llm_service: skynet\n")
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(path)
+
+        assert "llm_service" in str(exc.value)
+
+    def test_invalid_gpt_oss_reasoning_rejected(self, tmp_path):
+        path = self._write(tmp_path, "pipeline:\n  transform:\n    gpt_oss_reasoning: ultra\n")
+
+        with pytest.raises(ConfigError) as exc:
+            PipelineConfig.from_yaml(path)
+
+        assert "gpt_oss_reasoning" in str(exc.value)
 
     def test_paths_block_is_allowed(self, tmp_path):
         """The legitimate top-level `paths:` block does not trip the unknown-key check."""
@@ -506,6 +526,23 @@ class TestColdOutreachConfig:
         invalid = {k: v for k, v in rules.items() if v not in prod_config.transform.categories}
         assert invalid == {}
 
+    def test_llm_backend_and_model_match_the_yaml(self, prod_config):
+        """Bead 3zj end-to-end: the production yaml's service and model flow
+        through to the LLMService the pipeline constructs."""
+        assert prod_config.transform.llm_service == "ollama"
+        assert prod_config.transform.model == "qwen2.5:7b"
+
+        service = LLMService(
+            categories=prod_config.transform.categories,
+            service=prod_config.transform.llm_service,
+            model=prod_config.transform.model,
+            gpt_oss_reasoning=prod_config.transform.gpt_oss_reasoning,
+            llm_client=MagicMock(),
+        )
+
+        assert service.service == "ollama"
+        assert service.model == "qwen2.5:7b"
+
 
 class TestPathConfig:
     """PathConfig (the CONFIG_FILE / review-senders entry point) matches from_yaml:
@@ -578,3 +615,23 @@ class TestPathConfig:
 
         with pytest.raises(ConfigError, match="must be a mapping"):
             PathConfig(config_file=path)
+
+
+class TestFromEnv:
+    """from_env is the no-config-file fallback: env vars feed the config, which
+    (not the environment) then drives LLMService."""
+
+    def test_service_and_matching_model_from_env(self, monkeypatch):
+        monkeypatch.setenv("LLM_SERVICE", "Ollama")
+        monkeypatch.setenv("OLLAMA_MODEL", "qwen2.5:7b")
+
+        config = PipelineConfig.from_env()
+
+        assert config.transform.llm_service == "ollama"
+        assert config.transform.model == "qwen2.5:7b"
+
+    def test_unknown_service_env_rejected(self, monkeypatch):
+        monkeypatch.setenv("LLM_SERVICE", "skynet")
+
+        with pytest.raises(ValidationError):
+            PipelineConfig.from_env()

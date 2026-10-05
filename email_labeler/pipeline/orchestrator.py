@@ -65,7 +65,9 @@ class EmailPipeline:
             self.llm_service = LLMService(
                 categories=self.config.transform.categories,
                 max_content_length=self.config.transform.max_content_length,
+                service=self.config.transform.llm_service,
                 model=self.config.transform.model,
+                gpt_oss_reasoning=self.config.transform.gpt_oss_reasoning,
                 temperature=self.config.transform.temperature,
                 system_prompt=self.config.transform.system_prompt,
                 user_prompt=self.config.transform.user_prompt,

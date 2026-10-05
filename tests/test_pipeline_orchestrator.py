@@ -154,3 +154,21 @@ class TestEmailPipeline:
         assert len(run_result.errors) > 0
         assert "Extract failed" in str(run_result.errors)
         assert run_result.emails_processed == 0
+
+    def test_llm_service_wired_from_config(
+        self, mock_email_processor, email_database, mock_metrics_tracker, production_like_config
+    ):
+        """The pipeline's own LLMService construction takes backend and model from
+        the config (bead 3zj) — lazy, so no client is actually built here."""
+        production_like_config.transform.llm_service = "ollama"
+        production_like_config.transform.model = "qwen2.5:7b"
+
+        pipeline = EmailPipeline(
+            config=production_like_config,
+            email_processor=mock_email_processor,
+            database=email_database,
+            metrics_tracker=mock_metrics_tracker,
+        )
+
+        assert pipeline.llm_service.service == "ollama"
+        assert pipeline.llm_service.model == "qwen2.5:7b"

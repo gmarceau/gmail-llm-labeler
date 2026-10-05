@@ -283,7 +283,7 @@ def validate_config(args):
         # Print summary
         print("\nConfiguration summary:")
         print(f"  Extract source: {config.extract.source}")
-        print(f"  Transform LLM: {config.transform.llm_service}")
+        print(f"  Transform LLM: {config.transform.llm_service} (model: {config.transform.model})")
         print(f"  Categories: {len(config.transform.categories)}")
         print(f"  Database: {config.sync.database_path}")
         print(f"  Dry run: {config.dry_run}")

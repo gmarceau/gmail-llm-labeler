@@ -208,20 +208,11 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s",
 )
 
-# LLM wiring, consumed at call time by email_labeler/llm_service.py (LLMService):
-# which backend to call (LLM_SERVICE), where (OLLAMA_BASE_URL / OPENAI_API_KEY),
-# the model fallbacks when a caller doesn't pass model= (OPENAI_MODEL /
-# OLLAMA_MODEL), and the gpt-oss reasoning-effort level (GPT_OSS_REASONING).
-# NOT v1 leftovers — the pipeline's LLMService reads these even though
-# TransformConfig also carries llm_service/model fields; wiring those yaml
-# fields through to LLMService is tracked in a follow-up bead.
-LLM_SERVICE = os.getenv("LLM_SERVICE", "OpenAI")  # "OpenAI" or "Ollama"
-
-# OpenAI configuration
+# Connection credentials for the two LLM backends, consumed by LLMService at
+# client construction. Secrets and endpoints belong in .env, not the pipeline
+# yaml — WHICH backend and model to call is pipeline config
+# (TransformConfig.llm_service / .model), not environment.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# Ollama configuration
+# Ollama endpoint
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
-GPT_OSS_REASONING = os.getenv("GPT_OSS_REASONING", "medium")

@@ -8,7 +8,7 @@ optional; only genuinely required values must be supplied.
 """
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -54,9 +54,14 @@ class TransformConfig(BaseModel):
     # sender_rules/personal_domains AFTER construction; re-validating those
     # assignments makes a wrongly-typed rules file fail at load, not at runtime.
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    llm_service: str = "openai"  # Options: "openai", "ollama"
+    # Which backend LLMService calls — authoritative (passed to LLMService at
+    # construction); anything but these two values fails at load.
+    llm_service: Literal["openai", "ollama"] = "openai"
     model: str = "gpt-4o-mini"
     temperature: float = 0.0  # Sampling temperature; 0 for deterministic classification
+    # Reasoning-effort level for gpt-oss models on Ollama: rendered into the
+    # default gpt-oss system prompt (unused when system_prompt is set).
+    gpt_oss_reasoning: Literal["low", "medium", "high"] = "medium"
     max_content_length: int = 4000
     timeout: int = 30
     skip_on_error: bool = True
@@ -274,18 +279,22 @@ class PipelineConfig(BaseModel):
         """Create configuration from environment variables and defaults."""
         config = cls()
 
-        # Override with environment variables if present
+        # Env overrides — the no-config-file fallback path only; with a --config
+        # yaml the file is authoritative. The model fallback matches the selected
+        # service, and validate_assignment rejects a bad value right here.
         llm_service = os.getenv("LLM_SERVICE")
         if llm_service:
             config.transform.llm_service = llm_service.lower()
 
-        openai_model = os.getenv("OPENAI_MODEL")
-        if openai_model:
-            config.transform.model = openai_model
-        else:
-            ollama_model = os.getenv("OLLAMA_MODEL")
-            if ollama_model:
-                config.transform.model = ollama_model
+        model = os.getenv(
+            "OLLAMA_MODEL" if config.transform.llm_service == "ollama" else "OPENAI_MODEL"
+        )
+        if model:
+            config.transform.model = model
+
+        gpt_oss_reasoning = os.getenv("GPT_OSS_REASONING")
+        if gpt_oss_reasoning:
+            config.transform.gpt_oss_reasoning = gpt_oss_reasoning
 
         database_path = os.getenv("DATABASE_PATH")
         if database_path:
@@ -314,6 +323,7 @@ class PipelineConfig(BaseModel):
                     "llm_service": self.transform.llm_service,
                     "model": self.transform.model,
                     "temperature": self.transform.temperature,
+                    "gpt_oss_reasoning": self.transform.gpt_oss_reasoning,
                     "max_content_length": self.transform.max_content_length,
                     "timeout": self.transform.timeout,
                     "skip_on_error": self.transform.skip_on_error,

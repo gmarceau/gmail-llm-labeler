@@ -28,10 +28,9 @@ pip install -r email_labeler/requirements.txt
 Create a `.env` file:
 
 ```env
-# LLM Configuration
-LLM_SERVICE=OpenAI
+# LLM connection (which backend/model runs is chosen in the config file:
+# transform.llm_service / transform.model)
 OPENAI_API_KEY=your-key-here
-OPENAI_MODEL=gpt-4o-mini
 
 # Database
 DATABASE_PATH=email_pipeline.db

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from email_labeler.email_processor import EmailProcessor
-from email_labeler.llm_service import LLMCategorizationError
+from email_labeler.llm_service import LLMCategorizationError, LLMService
 from email_labeler.pipeline.base import (
     ActionResult,
     EmailRecord,
@@ -1179,6 +1179,27 @@ class TestCalculateConfidence:
         enriched = stage.execute([email], pipeline_context_no_test_mode)
 
         assert enriched[0].confidence == 1.0
+
+
+class TestTransformStageLLMWiring:
+    """TransformStage's own LLMService construction takes service, model, and
+    gpt_oss_reasoning from its TransformConfig (bead 3zj) — the config is
+    authoritative, not the environment."""
+
+    def test_own_llm_service_reflects_config(self, mock_email_processor, production_like_config):
+        production_like_config.transform.llm_service = "ollama"
+        production_like_config.transform.model = "qwen2.5:7b"
+        production_like_config.transform.gpt_oss_reasoning = "high"
+
+        # Patch client construction so the eager init stays offline.
+        with patch.object(LLMService, "_get_llm_client", return_value=MagicMock()):
+            stage = TransformStage(
+                production_like_config.transform, email_processor=mock_email_processor
+            )
+
+        assert stage.llm_service.service == "ollama"
+        assert stage.llm_service.model == "qwen2.5:7b"
+        assert stage.llm_service.gpt_oss_reasoning == "high"
 
 
 class TestLoadStage:
