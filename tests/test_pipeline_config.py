@@ -1,9 +1,16 @@
 """Tests for PipelineConfig YAML round-tripping and load-time validation."""
 
 import os
+from pathlib import Path
 
 import pytest
 
+from email_labeler.config import (
+    PathConfig,
+    PathsConfig,
+    get_default_data_dir,
+    get_default_log_dir,
+)
 from email_labeler.pipeline.config import (
     ConfigError,
     EscalationConfig,
@@ -498,3 +505,76 @@ class TestColdOutreachConfig:
         assert len(cold) > 0
         invalid = {k: v for k, v in rules.items() if v not in prod_config.transform.categories}
         assert invalid == {}
+
+
+class TestPathConfig:
+    """PathConfig (the CONFIG_FILE / review-senders entry point) matches from_yaml:
+    an empty file loads defaults instead of crashing, and a typo'd path key in a
+    file only PathConfig sees fails fast, named with its file."""
+
+    @pytest.fixture(autouse=True)
+    def hermetic(self, monkeypatch):
+        """Deterministic resolution: no path env vars (a dev .env may set some),
+        and no directory creation — _ensure_directories is a side effect, not the
+        behavior under test."""
+        for key in PathsConfig.model_fields:
+            monkeypatch.delenv(key.upper(), raising=False)
+        monkeypatch.setattr(PathConfig, "_ensure_directories", lambda self: None)
+
+    @staticmethod
+    def _write(tmp_path, content):
+        path = tmp_path / "config.yaml"
+        path.write_text(content)
+        return str(path)
+
+    def test_empty_file_loads_defaults(self, tmp_path):
+        config = PathConfig(config_file=self._write(tmp_path, ""))
+
+        assert config.database_file == get_default_data_dir() / "email_pipeline.db"
+        assert config.llm_log_file == get_default_log_dir() / "llm_interactions.json"
+
+    def test_null_paths_block_loads_defaults(self, tmp_path):
+        # `paths:` with nothing under it parses as {paths: None}
+        config = PathConfig(config_file=self._write(tmp_path, "paths:\n"))
+
+        assert config.database_file == get_default_data_dir() / "email_pipeline.db"
+
+    def test_typoed_path_key_fails_fast(self, tmp_path):
+        path = self._write(tmp_path, "paths:\n  database_fil: /tmp/x.db\n")
+
+        with pytest.raises(ConfigError) as exc:
+            PathConfig(config_file=path)
+
+        assert "database_fil" in str(exc.value)
+        assert "config.yaml" in str(exc.value)
+
+    def test_valid_file_resolves_yaml_and_defaults(self, tmp_path):
+        # PathConfig owns only the paths: block; other top-level keys are from_yaml's.
+        path = self._write(
+            tmp_path, "paths:\n  database_file: /tmp/custom.db\npipeline:\n  dry_run: true\n"
+        )
+
+        config = PathConfig(config_file=path)
+
+        assert config.database_file == Path("/tmp/custom.db").resolve()
+        assert config.llm_log_file == get_default_log_dir() / "llm_interactions.json"
+
+    def test_env_var_still_wins_over_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATABASE_FILE", "/tmp/env-wins.db")
+        path = self._write(tmp_path, "paths:\n  database_file: /tmp/yaml-loses.db\n")
+
+        config = PathConfig(config_file=path)
+
+        assert config.database_file == Path("/tmp/env-wins.db").resolve()
+
+    def test_non_mapping_document_fails(self, tmp_path):
+        path = self._write(tmp_path, "- just\n- a\n- list\n")
+
+        with pytest.raises(ConfigError, match="top-level mapping"):
+            PathConfig(config_file=path)
+
+    def test_non_mapping_paths_block_fails(self, tmp_path):
+        path = self._write(tmp_path, "paths:\n  - a\n  - b\n")
+
+        with pytest.raises(ConfigError, match="must be a mapping"):
+            PathConfig(config_file=path)

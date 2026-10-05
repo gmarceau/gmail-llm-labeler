@@ -13,12 +13,7 @@ from typing import Dict, List, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from ..config import PathsConfig
-
-
-class ConfigError(ValueError):
-    """Raised when a pipeline config file is missing, malformed, or has unknown keys
-    or invalid values (e.g. sender rules whose values are not configured categories)."""
+from ..config import ConfigError, PathsConfig
 
 
 class ExtractConfig(BaseModel):

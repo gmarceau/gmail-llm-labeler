@@ -7,10 +7,17 @@ from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 # Load environment variables
 load_dotenv()
+
+
+class ConfigError(ValueError):
+    """Raised when a config file is missing, malformed, or has unknown keys or
+    invalid values (e.g. a typo'd ``paths:`` key, or sender rules whose values
+    are not configured categories). Shared by PathConfig (the CONFIG_FILE/env
+    entry point) and PipelineConfig.from_yaml."""
 
 
 def get_default_data_dir() -> Path:
@@ -100,8 +107,27 @@ class PathConfig:
         yaml_paths = {}
         if config_file and Path(config_file).exists():
             with open(config_file) as f:
-                data = yaml.safe_load(f)
-                yaml_paths = data.get("paths", {})
+                # An empty file loads as None — same tolerance as from_yaml's `or {}`
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                raise ConfigError(
+                    f"Config file {config_file!r} must contain a top-level mapping, "
+                    f"got {type(data).__name__}"
+                )
+            yaml_paths = data.get("paths") or {}  # a bare `paths:` also loads as None
+            if not isinstance(yaml_paths, dict):
+                raise ConfigError(
+                    f"'paths' block in {config_file!r} must be a mapping, "
+                    f"got {type(yaml_paths).__name__}"
+                )
+            # Validate the key set with the same model from_yaml uses: PathsConfig
+            # forbids extra keys, so a typo'd path key fails fast here — named with
+            # its file — instead of being silently ignored by the .get(key) lookups
+            # in the resolution loop below.
+            try:
+                PathsConfig(**yaml_paths)
+            except ValidationError as e:
+                raise ConfigError(f"Invalid 'paths' block in {config_file!r}:\n{e}") from e
 
         # Get default directories
         default_dirs = {
