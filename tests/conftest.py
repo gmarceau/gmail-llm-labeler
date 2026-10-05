@@ -13,6 +13,7 @@ from email_labeler.email_processor import EmailProcessor
 from email_labeler.llm_service import LLMService
 from email_labeler.pipeline.base import EmailRecord, EnrichedEmailRecord, PipelineContext
 from email_labeler.pipeline.config import (
+    EscalationConfig,
     ExtractConfig,
     LoadConfig,
     PipelineConfig,
@@ -243,6 +244,29 @@ def pipeline_config():
             batch_size=10,
             track_metrics=True,
         ),
+    )
+
+
+@pytest.fixture
+def production_like_config():
+    """Create a pipeline configuration in the production shape.
+
+    Unlike the legacy ``pipeline_config`` fixture above (13 capitalized default
+    categories, gpt-3.5-turbo), this mirrors what runs against the real mailbox:
+    lowercase categories, freemail personal domains, no sender rules, header-only
+    LLM input, and escalation at its defaults. Function-scoped, so every test
+    gets its own instance and per-test overrides never leak between tests.
+    """
+    return PipelineConfig(
+        transform=TransformConfig(
+            categories=["transaction", "newsletter", "marketing", "cold-outreach", "main"],
+            personal_domains=["gmail.com"],
+            sender_rules={},
+            llm_body_mode="none",
+            # Spelled out for documentation: escalation stays at its default
+            # (enabled=True, body_head_lines=10) in the production shape.
+            escalation=EscalationConfig(),
+        )
     )
 
 

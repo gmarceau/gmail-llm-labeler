@@ -733,12 +733,11 @@ class TestTransformStageSenderShortcut:
         assert pipeline_context_no_test_mode.metrics["transform_llm_calls"] == 1
 
     def test_cold_outreach_rule_routes_via_shortcut(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """Recruiter domains rule to cold-outreach, which must be a valid target."""
-        pipeline_config.transform.categories.append("cold-outreach")
-        pipeline_config.transform.sender_rules = {"ovise.com": "cold-outreach"}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        production_like_config.transform.sender_rules = {"ovise.com": "cold-outreach"}
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         email = EmailRecord(
             id="e1",
@@ -755,11 +754,13 @@ class TestTransformStageSenderShortcut:
         llm_service.categorize_email.assert_not_called()
 
     def test_cold_outreach_rule_rejected_when_not_a_category(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """A cold-outreach rule is inert unless the category is configured."""
-        pipeline_config.transform.sender_rules = {"ovise.com": "cold-outreach"}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        # cold-outreach is a production category; remove it so the rule is inert.
+        production_like_config.transform.categories.remove("cold-outreach")
+        production_like_config.transform.sender_rules = {"ovise.com": "cold-outreach"}
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         email = EmailRecord(
             id="e1", subject="x", sender="danny@ovise.com",
@@ -833,7 +834,12 @@ class TestTransformStageBodyMode:
 
 
 class TestTransformStageSignalsInjection:
-    """Signals are injected for unruled company-domain senders only."""
+    """Signals are injected for unruled company-domain senders only.
+
+    The production_like_config fixture supplies the baseline
+    (personal_domains=["gmail.com"], no sender rules); tests override only what
+    they vary.
+    """
 
     def _email(self, **overrides):
         defaults = dict(
@@ -848,11 +854,9 @@ class TestTransformStageSignalsInjection:
         return EmailRecord(**defaults)
 
     def test_signals_injected_for_unruled_company_domain(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -862,11 +866,9 @@ class TestTransformStageSignalsInjection:
         assert pipeline_context_no_test_mode.metrics["transform_signals_injected"] == 1
 
     def test_no_signals_for_freemail_sender(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         stage.execute(
             [self._email(sender="Jake Miles <jacob.miles@gmail.com>")],
@@ -878,28 +880,27 @@ class TestTransformStageSignalsInjection:
         assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
 
     def test_no_signals_for_sender_rule_shortcut_hit(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.sender_rules = {"ovise.com": "Marketing"}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        production_like_config.transform.sender_rules = {"ovise.com": "marketing"}
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
-        assert enriched[0].category == "Marketing"
+        assert enriched[0].category == "marketing"
         llm_service.categorize_email.assert_not_called()
 
     def test_no_signals_for_ruled_address_that_falls_through(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """A sender whose *address* is ruled but whose rule category is invalid falls
         through to the LLM (see _try_sender_shortcut). Signals must not reappear: the
         user has already made a judgment about this sender.
         """
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.categories = ["Marketing"]
         # Address rule present but its category isn't configured -> shortcut declines.
-        pipeline_config.transform.sender_rules = {"danny@ovise.com": "cold-outreach"}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        production_like_config.transform.categories.remove("cold-outreach")
+        production_like_config.transform.sender_rules = {"danny@ovise.com": "cold-outreach"}
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -908,16 +909,17 @@ class TestTransformStageSignalsInjection:
         assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
 
     def test_no_signals_for_ruled_company_domain_that_falls_through(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """An individual's own vanity domain (e.g. repucci.org: main) is a company
         domain by the freemail test, but the user has already ruled it. No signals —
         the 'no known-sender rule' / 'company domain' facts would be contradictory.
         """
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.categories = ["Marketing"]
-        pipeline_config.transform.sender_rules = {"repucci.org": "main"}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        # main not configured -> the domain rule's category is invalid, so it falls
+        # through to the LLM; the point is that the sender is still ruled.
+        production_like_config.transform.categories.remove("main")
+        production_like_config.transform.sender_rules = {"repucci.org": "main"}
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         stage.execute(
             [self._email(sender="Michael Repucci <michael@repucci.org>")],
@@ -929,14 +931,12 @@ class TestTransformStageSignalsInjection:
         assert "transform_signals_injected" not in pipeline_context_no_test_mode.metrics
 
     def test_signals_metric_counts_injections_not_literal_text(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """transform_signals_injected counts real injected blocks — an email whose
         subject literally contains 'Signals (' (and receives no block, here via a
         freemail sender) must not increment the metric."""
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         stage.execute(
             [
@@ -954,9 +954,12 @@ class TestTransformStageSignalsInjection:
 
 
 class TestTransformStageEscalation:
-    """Tiered body escalation: re-classify borderline `main` with the body head."""
+    """Tiered body escalation: re-classify borderline `main` with the body head.
 
-    LOWERCASE_CATEGORIES = ["transaction", "newsletter", "marketing", "cold-outreach", "main"]
+    The production_like_config fixture supplies the shared baseline (lowercase
+    categories, personal_domains=["gmail.com"], no sender rules, header-only
+    LLM input, escalation enabled); tests override only what they vary.
+    """
 
     def _email(self, **overrides):
         defaults = dict(
@@ -971,18 +974,13 @@ class TestTransformStageEscalation:
         return EmailRecord(**defaults)
 
     def test_escalates_borderline_main_with_body_head(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.llm_body_mode = "none"
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
-        pipeline_config.transform.escalation.body_head_lines = 3
+        production_like_config.transform.escalation.body_head_lines = 3
         mock_email_processor.strip_html.side_effect = lambda c: c
         # First pass says main; escalated (body-head) pass says marketing.
         llm_service.categorize_email.side_effect = [("main", "looks personal"), ("marketing", "pitch")]
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -998,14 +996,10 @@ class TestTransformStageEscalation:
         assert pipeline_context_no_test_mode.metrics["transform_escalation_second_pass"] == 1
 
     def test_no_escalation_when_first_pass_is_not_main(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
         llm_service.categorize_email.return_value = ("marketing", "bulk promo")
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -1014,14 +1008,10 @@ class TestTransformStageEscalation:
         assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
 
     def test_no_escalation_for_freemail_sender(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
         llm_service.categorize_email.return_value = ("main", "personal")
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute(
             [self._email(sender="Jake Miles <jacob.miles@gmail.com>")],
@@ -1033,14 +1023,11 @@ class TestTransformStageEscalation:
         assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
 
     def test_no_escalation_when_disabled(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = False
+        production_like_config.transform.escalation.enabled = False
         llm_service.categorize_email.return_value = ("main", "personal")
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -1049,12 +1036,10 @@ class TestTransformStageEscalation:
         assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
 
     def test_no_escalation_for_sender_rule_shortcut_hit(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.sender_rules = {"thalolabs.com": "main"}
-        pipeline_config.transform.escalation.enabled = True
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        production_like_config.transform.sender_rules = {"thalolabs.com": "main"}
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -1063,16 +1048,12 @@ class TestTransformStageEscalation:
         assert pipeline_context_no_test_mode.metrics["transform_sender_shortcut"] == 1
 
     def test_no_escalation_without_body(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
         # The body gate checks HTML-stripped text; identity keeps "   " empty.
         mock_email_processor.strip_html.side_effect = lambda c: c
         llm_service.categorize_email.return_value = ("main", "personal")
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute(
             [self._email(content="   ")], pipeline_context_no_test_mode
@@ -1084,20 +1065,18 @@ class TestTransformStageEscalation:
 
     @pytest.mark.parametrize("mode", ["head", "full"])
     def test_no_escalation_when_first_pass_already_saw_body(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode, mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode, mode
     ):
         """Escalation is a header-only-mode device: in head/full the first pass
         already saw MORE body than the 10-line escalation pass, so a second
         pass adds no information and can only flip verdicts on less context."""
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.llm_body_mode = mode
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
-        pipeline_config.transform.escalation.body_head_lines = 3
+        production_like_config.transform.llm_body_mode = mode
+        # Even an escalation pass that would see strictly less body (3 of the
+        # 7 lines) than the first pass saw must not fire here.
+        production_like_config.transform.escalation.body_head_lines = 3
         mock_email_processor.strip_html.side_effect = lambda c: c
         llm_service.categorize_email.return_value = ("main", "personal")
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -1109,17 +1088,13 @@ class TestTransformStageEscalation:
         assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
 
     def test_no_escalation_when_body_strips_to_nothing(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """A body that is only HTML markup (no text) strips to empty: the
         escalated pass would repeat the identical header-only input at temp 0."""
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
         mock_email_processor.strip_html.side_effect = lambda c: ""
         llm_service.categorize_email.return_value = ("main", "personal")
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute(
             [self._email(content="<html><body><div></div></body></html>")],
@@ -1131,15 +1106,11 @@ class TestTransformStageEscalation:
         assert "transform_escalation_second_pass" not in pipeline_context_no_test_mode.metrics
 
     def test_at_most_one_escalation_per_email(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """Even if the second pass returns `main` again, no further escalation."""
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
         llm_service.categorize_email.side_effect = [("main", "a"), ("main", "b")]
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
@@ -1148,15 +1119,11 @@ class TestTransformStageEscalation:
         assert pipeline_context_no_test_mode.metrics["transform_escalation_second_pass"] == 1
 
     def test_escalated_result_is_validated(
-        self, llm_service, mock_email_processor, pipeline_config, pipeline_context_no_test_mode
+        self, llm_service, mock_email_processor, production_like_config, pipeline_context_no_test_mode
     ):
         """An out-of-vocabulary escalated category falls back to main like any other."""
-        pipeline_config.transform.categories = self.LOWERCASE_CATEGORIES
-        pipeline_config.transform.personal_domains = ["gmail.com"]
-        pipeline_config.transform.sender_rules = {}
-        pipeline_config.transform.escalation.enabled = True
         llm_service.categorize_email.side_effect = [("main", "a"), ("Bogus", "b")]
-        stage = TransformStage(pipeline_config.transform, llm_service, mock_email_processor)
+        stage = TransformStage(production_like_config.transform, llm_service, mock_email_processor)
 
         enriched = stage.execute([self._email()], pipeline_context_no_test_mode)
 
