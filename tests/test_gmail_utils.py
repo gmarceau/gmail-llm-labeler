@@ -115,11 +115,11 @@ class TestComputeSenderSignals:
     """Deterministic advisory signals injected for header-poor cold mail."""
 
     def _signals(self, **overrides):
-        defaults = dict(
-            sender="Danny Tomkins <danny@ovise.com>",
-            subject="An opportunity that made me think of you",
-            headers={},
-        )
+        defaults = {
+            "sender": "Danny Tomkins <danny@ovise.com>",
+            "subject": "An opportunity that made me think of you",
+            "headers": {},
+        }
         defaults.update(overrides)
         return compute_sender_signals(**defaults)
 

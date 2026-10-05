@@ -777,14 +777,14 @@ class TestTransformStageBodyMode:
     """Unknown-sender LLM input is header-first; body inclusion is gated by llm_body_mode."""
 
     def _email(self, **overrides):
-        defaults = dict(
-            id="e1",
-            subject="Weekly Digest",
-            sender="news@example.com",
-            content="Line one\nLine two\nLine three\nUnsubscribe here",
-            received_date="2024-01-01T10:00:00Z",
-            headers={"list-unsubscribe": "<https://example.com/unsub>", "precedence": "bulk"},
-        )
+        defaults = {
+            "id": "e1",
+            "subject": "Weekly Digest",
+            "sender": "news@example.com",
+            "content": "Line one\nLine two\nLine three\nUnsubscribe here",
+            "received_date": "2024-01-01T10:00:00Z",
+            "headers": {"list-unsubscribe": "<https://example.com/unsub>", "precedence": "bulk"},
+        }
         defaults.update(overrides)
         return EmailRecord(**defaults)
 
@@ -842,14 +842,14 @@ class TestTransformStageSignalsInjection:
     """
 
     def _email(self, **overrides):
-        defaults = dict(
-            id="e1",
-            subject="An opportunity that made me think of you",
-            sender="Danny Tomkins <danny@ovise.com>",
-            content="body",
-            received_date="2024-01-01T10:00:00Z",
-            headers={},
-        )
+        defaults = {
+            "id": "e1",
+            "subject": "An opportunity that made me think of you",
+            "sender": "Danny Tomkins <danny@ovise.com>",
+            "content": "body",
+            "received_date": "2024-01-01T10:00:00Z",
+            "headers": {},
+        }
         defaults.update(overrides)
         return EmailRecord(**defaults)
 
@@ -962,14 +962,14 @@ class TestTransformStageEscalation:
     """
 
     def _email(self, **overrides):
-        defaults = dict(
-            id="e1",
-            subject="Guillaume, love your background!",
-            sender="Kenn Peters <kenn@thalolabs.com>",
-            content="Hi Guillaume\n\nWe are a Series A stealth startup backed by Sequoia\nHappy to offer equity and a $5k referral bonus\nAre you open to a brief chat?\nThanks\nKenn",
-            received_date="2024-01-01T10:00:00Z",
-            headers={"return-path": "<kenn@thalolabs.com>"},
-        )
+        defaults = {
+            "id": "e1",
+            "subject": "Guillaume, love your background!",
+            "sender": "Kenn Peters <kenn@thalolabs.com>",
+            "content": "Hi Guillaume\n\nWe are a Series A stealth startup backed by Sequoia\nHappy to offer equity and a $5k referral bonus\nAre you open to a brief chat?\nThanks\nKenn",
+            "received_date": "2024-01-01T10:00:00Z",
+            "headers": {"return-path": "<kenn@thalolabs.com>"},
+        }
         defaults.update(overrides)
         return EmailRecord(**defaults)
 

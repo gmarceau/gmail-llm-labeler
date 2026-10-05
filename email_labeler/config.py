@@ -191,7 +191,10 @@ class PathConfig:
 _config_file = os.getenv("CONFIG_FILE")
 _path_config = PathConfig(config_file=_config_file)
 
-# File paths - backward compatible with old code
+# Resolved paths, exported as module-level defaults: EmailDatabase, LLMService
+# (its interaction/error logs), and MetricsTracker consume these when constructed
+# without explicit paths. Key set and resolution are owned by PathsConfig/
+# PathConfig above.
 DATABASE_FILE = str(_path_config.database_file)
 LLM_LOG_FILE = str(_path_config.llm_log_file)
 ERROR_LOG_FILE = str(_path_config.error_log_file)
@@ -205,10 +208,13 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s",
 )
 
-# Gmail labels
-PROCESSED_LABEL = "Processed"
-
-# LLM Configuration
+# LLM wiring, consumed at call time by email_labeler/llm_service.py (LLMService):
+# which backend to call (LLM_SERVICE), where (OLLAMA_BASE_URL / OPENAI_API_KEY),
+# the model fallbacks when a caller doesn't pass model= (OPENAI_MODEL /
+# OLLAMA_MODEL), and the gpt-oss reasoning-effort level (GPT_OSS_REASONING).
+# NOT v1 leftovers — the pipeline's LLMService reads these even though
+# TransformConfig also carries llm_service/model fields; wiring those yaml
+# fields through to LLMService is tracked in a follow-up bead.
 LLM_SERVICE = os.getenv("LLM_SERVICE", "OpenAI")  # "OpenAI" or "Ollama"
 
 # OpenAI configuration

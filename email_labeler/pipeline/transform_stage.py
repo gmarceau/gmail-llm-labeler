@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import datetime
 from typing import Any, List, Optional, Tuple
-from ..progress import SmartBar
+
 from ..email_processor import EmailProcessor
 from ..gmail_utils import (
     compute_sender_signals,
@@ -15,9 +15,9 @@ from ..gmail_utils import (
     strip_reply_prefix,
 )
 from ..llm_service import LLMService
+from ..progress import SmartBar
 from .base import EmailRecord, EnrichedEmailRecord, PipelineContext, PipelineStage
 from .config import TransformConfig
-
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ class TransformStage(PipelineStage):
                 logger.error(error_msg)
                 context.add_error(error_msg)
 
-                if self.config.skip_on_error :
+                if self.config.skip_on_error:
                     continue
                 elif not context.config.continue_on_error:
                     raise

@@ -42,13 +42,13 @@ class EmailProcessor:
     def strip_html(self, html_content: str) -> str:
         """Remove HTML tags and extract text content. Replace images with size-based placeholders."""
         soup = BeautifulSoup(html_content, "html.parser")
-        
+
         # Replace images with size-based placeholders before extracting text
         for img in soup.find_all('img'):
             width = img.get('width')
             height = img.get('height')
             alt = img.get('alt', '')
-            
+
             if width and height:
                 try:
                     w = int(width)
@@ -69,16 +69,16 @@ class EmailProcessor:
                     placeholder = f"[IMAGE: {alt}]"
                 else:
                     placeholder = "[IMAGE]"
-            
+
             img.replace_with(placeholder)
-        
+
         text_content = soup.get_text(separator=" ", strip=True)
         text_content = re.sub(r"\s+", " ", text_content).strip()
-        
+
         # Handle plain text emails with [image: alt] format (from text/plain MIME parts)
         # Convert to our standard format: [IMAGE: alt]
         text_content = re.sub(r'\[image:\s*([^\]]+)\]', r'[IMAGE: \1]', text_content, flags=re.IGNORECASE)
-        
+
         return text_content
 
     def fetch_emails_from_gmail(

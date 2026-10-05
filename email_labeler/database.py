@@ -167,7 +167,7 @@ class EmailDatabase:
         sender: str,
         received_date: str,
         content: str,
-        headers: Dict = {},  # noqa: B006 — never mutated, json.dumps only reads it
+        headers: Optional[Dict] = None,
         has_unsubscribe: bool = False,
     ):
         """Save email to the database."""
@@ -177,7 +177,7 @@ class EmailDatabase:
                 (id, subject, sender, received_date, content, headers, has_unsubscribe)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-            (email_id, subject, sender, received_date, content, json.dumps(headers),
+            (email_id, subject, sender, received_date, content, json.dumps(headers or {}),
              int(has_unsubscribe)),
         )
         self.conn.commit()
