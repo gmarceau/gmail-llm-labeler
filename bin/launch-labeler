@@ -22,4 +22,14 @@ cd "$PROJECT_ROOT" || {
     exit 1
 }
 
-exec "$VENV_PYTHON" -m email_labeler.pipeline.cli run --config "$CONFIG_FILE"
+# Scheduled runs (Shortcuts automations) capture no output, so a run that
+# dies mid-flight leaves nothing to diagnose. Capture the full stdout+stderr
+# per run; -u keeps python unbuffered so a SIGKILL can't swallow the tail.
+# Keep 14 days of run logs.
+LOG_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gmail-llm-labeler/logs"
+LOG_FILE="$LOG_DIR/pipeline-$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "$LOG_DIR"
+find "$LOG_DIR" -name 'pipeline-*.log' -mtime +14 -delete
+
+echo "=== pipeline run $(date '+%Y-%m-%d %H:%M:%S') config=$CONFIG_FILE ===" >> "$LOG_FILE"
+exec "$VENV_PYTHON" -u -m email_labeler.pipeline.cli run --config "$CONFIG_FILE" >> "$LOG_FILE" 2>&1
