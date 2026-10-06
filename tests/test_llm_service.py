@@ -14,6 +14,17 @@ TEST_CATEGORIES = ["Marketing", "Work", "Personal", "Bills", "Newsletters", "Oth
 TEST_MAX_CONTENT_LENGTH = 2000
 
 
+def read_error_log():
+    """Read the categorization error log for the current test.
+
+    The autouse isolate_llm_logs fixture (conftest) redirects
+    email_labeler.llm_service.ERROR_LOG_FILE to a per-test tmp file, so read
+    the module attribute — not a hardcoded path — to pick the redirect up.
+    """
+    with open(llm_service_module.ERROR_LOG_FILE) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
 class TestLLMService:
     """Test cases for LLMService class."""
 
@@ -138,16 +149,20 @@ class TestLLMService:
         assert "[middle content truncated]" in content_in_prompt
 
     def test_categorize_email_invalid_json_response(self, real_llm_service, mock_openai_client):
-        """Test handling invalid JSON response from LLM."""
+        """Non-JSON response with no extractable category fails the
+        categorization instead of silently returning 'Other'."""
         email_content = "Test email content"
         mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
             "Invalid JSON"
         )
 
-        category, explanation = real_llm_service.categorize_email(email_content)
+        with pytest.raises(LLMCategorizationError, match="Unparseable LLM response"):
+            real_llm_service.categorize_email(email_content)
 
-        assert category == "Other"
-        assert explanation == "Failed to parse response"
+        entries = read_error_log()
+        assert len(entries) == 1
+        assert "Unparseable LLM response" in entries[0]["error"]
+        assert "Invalid JSON" in entries[0]["error"]
 
     def test_categorize_email_missing_fields(self, mock_openai_client):
         """Test handling response with missing required fields."""
@@ -191,7 +206,8 @@ class TestLLMService:
         assert "API Error" in str(exc_info.value)
 
     def test_categorize_email_invalid_category(self, mock_openai_client):
-        """Test handling of invalid category in response."""
+        """An unknown category the fuzzy matcher cannot place fails the
+        categorization instead of silently returning 'Other'."""
         email_content = "Test email content"
         response = {"category": "InvalidCategory", "explanation": "Test explanation"}
 
@@ -207,10 +223,65 @@ class TestLLMService:
             model="gpt-3.5-turbo",
         )
 
-        category, explanation = llm_service.categorize_email(email_content)
+        with pytest.raises(LLMCategorizationError, match="Unknown category 'InvalidCategory'"):
+            llm_service.categorize_email(email_content)
 
-        assert category == "Other"
-        assert "Unknown category: InvalidCategory" in explanation
+        entries = read_error_log()
+        assert len(entries) == 1
+        assert "Unknown category" in entries[0]["error"]
+        assert "InvalidCategory" in entries[0]["error"]
+
+    def test_categorize_email_empty_response_raises_and_logs_error(self, mock_openai_client):
+        """An empty LLM response is a categorization failure, never 'Other'.
+
+        Incident 2026-10-04: qwen2.5:7b returned 19 empty responses across
+        retries with zero error-log records — every one fell through to a
+        fallback category the mailbox was never configured for.
+        """
+        email_content = "Test email content"
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = ""
+
+        # Create LLMService with mocked client
+        llm_service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+        )
+
+        with pytest.raises(LLMCategorizationError, match="Unparseable LLM response"):
+            llm_service.categorize_email(email_content)
+
+        entries = read_error_log()
+        assert len(entries) == 1
+        assert "Unparseable LLM response" in entries[0]["error"]
+        # The empty response text is visible, quoted, in the recorded error
+        assert entries[0]["error"].endswith(": ''")
+
+    def test_categorize_email_empty_category_field_raises(self, mock_openai_client):
+        """An empty 'category' in otherwise-valid JSON fails instead of
+        fuzzy-matching the first configured label ("" is "in" every string)."""
+        email_content = "Test email content"
+        response = {"category": "", "explanation": "Model returned no category"}
+
+        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
+            json.dumps(response)
+        )
+
+        # Create LLMService with mocked client
+        llm_service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            llm_client=mock_openai_client,
+            model="gpt-3.5-turbo",
+        )
+
+        with pytest.raises(LLMCategorizationError, match="empty 'category'"):
+            llm_service.categorize_email(email_content)
+
+        entries = read_error_log()
+        assert len(entries) == 1
+        assert "empty 'category' field" in entries[0]["error"]
 
     def test_get_llm_client_openai(self):
         """Test getting OpenAI client."""
