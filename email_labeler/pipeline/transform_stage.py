@@ -47,6 +47,7 @@ class TransformStage(PipelineStage):
             model=config.model,
             gpt_oss_reasoning=config.gpt_oss_reasoning,
             temperature=config.temperature,
+            timeout=config.timeout,
             system_prompt=config.system_prompt,
             user_prompt=config.user_prompt,
         )

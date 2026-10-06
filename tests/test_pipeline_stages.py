@@ -1184,14 +1184,15 @@ class TestCalculateConfidence:
 
 
 class TestTransformStageLLMWiring:
-    """TransformStage's own LLMService construction takes service, model, and
-    gpt_oss_reasoning from its TransformConfig (bead 3zj) — the config is
-    authoritative, not the environment."""
+    """TransformStage's own LLMService construction takes service, model,
+    gpt_oss_reasoning, and timeout from its TransformConfig (bead 3zj, bead omm)
+    — the config is authoritative, not the environment."""
 
     def test_own_llm_service_reflects_config(self, mock_email_processor, production_like_config):
         production_like_config.transform.llm_service = "ollama"
         production_like_config.transform.model = "qwen2.5:7b"
         production_like_config.transform.gpt_oss_reasoning = "high"
+        production_like_config.transform.timeout = 120
 
         # Patch client construction so the eager init stays offline.
         with patch.object(LLMService, "_get_llm_client", return_value=MagicMock()):
@@ -1202,6 +1203,7 @@ class TestTransformStageLLMWiring:
         assert stage.llm_service.service == "ollama"
         assert stage.llm_service.model == "qwen2.5:7b"
         assert stage.llm_service.gpt_oss_reasoning == "high"
+        assert stage.llm_service.timeout == 120
 
 
 class TestLoadStage:

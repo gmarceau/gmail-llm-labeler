@@ -12,10 +12,12 @@ from email.headerregistry import Address
 from email.utils import parseaddr
 from typing import Dict, List, Optional, Union
 
+import httplib2
 import pydash
 import tldextract
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_httplib2 import AuthorizedHttp
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
@@ -31,6 +33,11 @@ SCOPES = [
 # Default file paths
 TOKEN_FILE = "token.json"
 CREDENTIALS_FILE = "credentials.json"
+
+# Socket timeout (seconds) for every Gmail API request. httplib2's default is to
+# block forever, so without this a wedged Gmail call parks the whole pipeline
+# (observed: a scheduled run hung for 27 days in select() on a socket).
+GMAIL_API_TIMEOUT = 30
 
 # Header names (lowercase) extracted from Gmail payloads for sender classification.
 CLASSIFICATION_HEADER_NAMES = [
@@ -170,7 +177,12 @@ def get_gmail_client(
             token.write(creds.to_json())
             logger.debug(f"Credentials saved to {token_file}")
 
-    return build("gmail", "v1", credentials=creds)
+    # build() rejects http= together with credentials=, and its credentials
+    # path constructs a bare (never-timing-out) httplib2.Http — so authorize
+    # explicitly: AuthorizedHttp layers OAuth refresh on an httplib2.Http that
+    # carries the GMAIL_API_TIMEOUT socket timeout. Fail fast beats park forever.
+    http = AuthorizedHttp(creds, http=httplib2.Http(timeout=GMAIL_API_TIMEOUT))
+    return build("gmail", "v1", http=http)
 
 
 def fetch_emails(

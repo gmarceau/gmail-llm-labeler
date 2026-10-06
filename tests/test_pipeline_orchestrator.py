@@ -158,10 +158,12 @@ class TestEmailPipeline:
     def test_llm_service_wired_from_config(
         self, mock_email_processor, email_database, mock_metrics_tracker, production_like_config
     ):
-        """The pipeline's own LLMService construction takes backend and model from
-        the config (bead 3zj) — lazy, so no client is actually built here."""
+        """The pipeline's own LLMService construction takes backend, model, and
+        timeout from the config (bead 3zj, bead omm) — lazy, so no client is
+        actually built here."""
         production_like_config.transform.llm_service = "ollama"
         production_like_config.transform.model = "qwen2.5:7b"
+        production_like_config.transform.timeout = 120
 
         pipeline = EmailPipeline(
             config=production_like_config,
@@ -172,3 +174,4 @@ class TestEmailPipeline:
 
         assert pipeline.llm_service.service == "ollama"
         assert pipeline.llm_service.model == "qwen2.5:7b"
+        assert pipeline.llm_service.timeout == 120
