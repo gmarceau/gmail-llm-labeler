@@ -55,6 +55,9 @@ _SUPPORTED_SERVICES = ("openai", "ollama")
 # config.transform.model; these defaults only serve standalone LLMService use.
 _DEFAULT_MODELS = {"openai": "gpt-4o-mini", "ollama": "llama3.1"}
 
+# Response budget per request — flows to OpenAI max_tokens / ollama num_predict.
+_MAX_TOKENS = 500
+
 # Absolute fallbacks for scheduled-run environments whose PATH omits
 # Homebrew (observed: PATH had ~/.cargo/bin but not /opt/homebrew/bin,
 # so `local["ollama"]` raised CommandNotFound while ollama sat installed).
@@ -106,8 +109,10 @@ class LLMService:
         Args:
             categories: List of category labels for email classification.
             max_content_length: Maximum length of email content before truncation.
-            llm_client: Optional OpenAI client instance. If not provided, creates
-                one for the selected service at init (or at first use, if lazy).
+            llm_client: Optional OpenAI client instance (openai service only —
+                the ollama service calls its native /api/chat and never builds
+                one). If not provided, creates one at init (or at first use,
+                if lazy).
             model: Optional model name. If not provided, uses the per-service
                 default — the pipeline always passes config.transform.model.
             service: Which backend to call: "openai" or "ollama" (case-insensitive).
@@ -139,13 +144,15 @@ class LLMService:
         self.timeout = timeout
         self.gpt_oss_reasoning = gpt_oss_reasoning
         self.model = model or _DEFAULT_MODELS[service]
-        self.llm_client: Optional[OpenAI] = llm_client
-        if self.llm_client is None and not lazy_init:
+        # The openai service keeps an SDK client; the ollama service calls its
+        # native /api/chat per request (see _call_ollama) and holds no client.
+        self.llm_client: Optional[OpenAI] = llm_client if service == "openai" else None
+        if service == "openai" and self.llm_client is None and not lazy_init:
             self.llm_client = self._get_llm_client()
 
     def _ensure_llm_client(self):
-        """Ensure LLM client is initialized (for lazy initialization)."""
-        if self.llm_client is None and self._lazy_init:
+        """Ensure the OpenAI client is initialized (lazy path, openai service only)."""
+        if self.service == "openai" and self.llm_client is None and self._lazy_init:
             self.llm_client = self._get_llm_client()
 
     def _ensure_ollama_running(self):
@@ -172,21 +179,20 @@ class LLMService:
         raise RuntimeError("Timed out waiting for ollama serve to start")
 
     def _get_llm_client(self) -> OpenAI:
-        """Get the client for the selected service (self.service).
+        """Construct the OpenAI SDK client (openai service only).
 
-        Both paths pass self.timeout: a client without a request timeout parks
-        its thread in select() forever when the call never returns (observed:
-        a scheduled run hung for 27 days on one such call).
+        Carries self.timeout: a client without a request timeout parks its
+        thread in select() forever when the call never returns (observed: a
+        scheduled run hung for 27 days on one such call). The ollama service
+        has no client — it calls the native /api/chat in _call_ollama.
         """
-        if self.service == "ollama":
-            self._ensure_ollama_running()
-            logging.debug(f"Using Ollama at {OLLAMA_BASE_URL} with model {self.model}")
-            return OpenAI(  # Dummy key for Ollama
-                base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=self.timeout
+        if self.service != "openai":
+            raise RuntimeError(
+                f"_get_llm_client is openai-only; the {self.service!r} service "
+                "uses its native transport in _call_ollama"
             )
-        else:
-            logging.info(f"Using OpenAI with model {self.model}")
-            return OpenAI(api_key=OPENAI_API_KEY, timeout=self.timeout)
+        logging.info(f"Using OpenAI with model {self.model}")
+        return OpenAI(api_key=OPENAI_API_KEY, timeout=self.timeout)
 
     def _render_template(self, template: str, variables: Dict[str, str]) -> str:
         """Render a template string with provided variables.
@@ -292,28 +298,64 @@ class LLMService:
         """Make the API call to the LLM."""
         start_time = time.time()
 
-        # Prepare completion kwargs
-        completion_kwargs = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": 500,
-        }
-
-        # Add response_format for OpenAI (not supported by Ollama)
-        if self.service == "openai":
-            completion_kwargs["response_format"] = {"type": "json_object"}
-
         logging.debug(f"Calling {self.service} API with model {self.model}")
-        assert self.llm_client is not None, "LLM client must be initialized"
-        response = self.llm_client.chat.completions.create(**completion_kwargs)  # type: ignore[call-overload]
+        if self.service == "ollama":
+            content = self._call_ollama(messages)
+        else:
+            assert self.llm_client is not None, "LLM client must be initialized"
+            response = self.llm_client.chat.completions.create(  # type: ignore[call-overload]
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=_MAX_TOKENS,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
 
         end_time = time.time()
 
         # Log the interaction
-        self._log_interaction(start_time, end_time, response.choices[0].message.content, email_content)
+        self._log_interaction(start_time, end_time, content, email_content)
 
-        return response.choices[0].message.content  # type: ignore[no-any-return]
+        return content  # type: ignore[no-any-return]
+
+    def _call_ollama(self, messages: list) -> str:
+        """Call ollama's native /api/chat over httpx.
+
+        The OpenAI-compat /v1 endpoint drops num_ctx entirely (verified against
+        ollama 0.32.5: neither a top-level num_ctx nor nested options.num_ctx
+        reaches the runner) and silently clips oversized prompts to ~2k tokens
+        with degenerate output — the empty-completion failure mode of
+        2026-10-04. The native endpoint honors options, so the ollama service
+        speaks it directly: one transport, no dummy api key.
+        """
+        self._ensure_ollama_running()
+        response = httpx.post(
+            url=OLLAMA_BASE_URL.replace("/v1", "") + "/api/chat",
+            json={
+                "model": self.model,
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "num_ctx": self._num_ctx(messages),
+                    "temperature": self.temperature,
+                    "num_predict": _MAX_TOKENS,
+                },
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()["message"]["content"]
+
+    def _num_ctx(self, messages: list) -> int:
+        """Context window for one ollama request, sized from the actual prompt.
+
+        Prompt tokens are over-estimated at 4 chars per token (English runs
+        4-5), then the response budget and slack are added on top, so the
+        prompt never gets clipped regardless of the server's default context.
+        """
+        prompt_chars = sum(len(message["content"]) for message in messages)
+        return prompt_chars // 4 + _MAX_TOKENS + 512
 
     def _parse_response(self, response_text: str, subject: str = "Unknown") -> Tuple[str, str]:
         """Parse and validate the LLM response.

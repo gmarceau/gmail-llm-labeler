@@ -60,23 +60,18 @@ class TestLLMService:
             assert service.model == "gpt-4o-mini"
 
     def test_init_without_client_ollama(self):
-        """Test initialization without client for Ollama."""
-        with (
-            patch("email_labeler.llm_service.OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-            patch("email_labeler.llm_service.httpx.get"),  # ollama counts as running
-            patch("email_labeler.llm_service.OpenAI") as mock_openai,
-        ):
+        """Ollama init is pure: no SDK client, no server contact (bead 0km)."""
+        with patch("email_labeler.llm_service.OpenAI") as mock_openai:
             service = LLMService(
                 categories=TEST_CATEGORIES,
                 max_content_length=TEST_MAX_CONTENT_LENGTH,
                 service="ollama",
             )
 
-            mock_openai.assert_called_once_with(
-                base_url="http://localhost:11434/v1", api_key="ollama", timeout=30
-            )
-            # No model passed -> the per-service default
-            assert service.model == "llama3.1"
+        mock_openai.assert_not_called()
+        assert service.llm_client is None
+        # No model passed -> the per-service default
+        assert service.model == "llama3.1"
 
     def test_eager_init_respects_passed_model(self):
         """The eager no-client path keeps the caller's model (bead 3zj: it used
@@ -299,24 +294,16 @@ class TestLLMService:
 
             mock_openai.assert_called_with(api_key="test-key", timeout=30)
 
-    def test_get_llm_client_ollama(self):
-        """Test getting Ollama client."""
-        with (
-            patch("email_labeler.llm_service.OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-            patch("email_labeler.llm_service.httpx.get"),  # ollama counts as running
-            patch("email_labeler.llm_service.OpenAI") as mock_openai,
-        ):
-            service = LLMService(
-                categories=TEST_CATEGORIES,
-                max_content_length=TEST_MAX_CONTENT_LENGTH,
-                service="ollama",
-                lazy_init=True,
-            )
+    def test_get_llm_client_ollama_raises(self):
+        """_get_llm_client is openai-only; the ollama service goes native."""
+        service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=TEST_MAX_CONTENT_LENGTH,
+            service="ollama",
+            lazy_init=True,
+        )
+        with pytest.raises(RuntimeError, match="openai-only"):
             service._get_llm_client()
-
-            mock_openai.assert_called_with(
-                base_url="http://localhost:11434/v1", api_key="ollama", timeout=30
-            )
 
     @pytest.mark.parametrize(
         "content,expected_category",
@@ -347,29 +334,30 @@ class TestLLMService:
         assert category == expected_category
         assert explanation == "Test explanation"
 
-    def test_categorize_email_with_reasoning(self, mock_openai_client):
+    def test_categorize_email_with_reasoning(self):
         """Test categorization with detailed reasoning enabled."""
         email_content = "Project deadline reminder"
         expected_response = {"category": "Work", "explanation": "Business related"}
 
-        mock_openai_client.chat.completions.create.return_value.choices[0].message.content = (
-            json.dumps(expected_response)
-        )
-
         # gpt-oss model on ollama with no custom prompt -> the gpt-oss default prompt
-        llm_service = LLMService(
-            categories=TEST_CATEGORIES,
-            max_content_length=TEST_MAX_CONTENT_LENGTH,
-            llm_client=mock_openai_client,
-            service="ollama",
-            model="gpt-oss-instruct",
-            gpt_oss_reasoning="medium",
-        )
+        with (
+            patch.object(LLMService, "_ensure_ollama_running"),
+            patch("email_labeler.llm_service.httpx.post") as mock_post,
+        ):
+            llm_service = LLMService(
+                categories=TEST_CATEGORIES,
+                max_content_length=TEST_MAX_CONTENT_LENGTH,
+                service="ollama",
+                model="gpt-oss-instruct",
+                gpt_oss_reasoning="medium",
+            )
+            mock_post.return_value.json.return_value = {
+                "message": {"content": json.dumps(expected_response)}
+            }
 
-        llm_service.categorize_email(email_content)
+            llm_service.categorize_email(email_content)
 
-        call_args = mock_openai_client.chat.completions.create.call_args
-        messages = call_args[1]["messages"]
+        messages = mock_post.call_args[1]["json"]["messages"]
 
         # Should include reasoning in the prompt
         system_message = messages[0]["content"]
@@ -692,24 +680,111 @@ class TestClientTimeout:
 
         mock_openai.assert_called_once_with(api_key="test-key", timeout=120)
 
-    def test_ollama_client_timeout_from_transform_config(self):
-        """The ollama-path client (OpenAI-compatible base_url) gets the same timeout."""
+
+class TestOllamaNumCtx:
+    """Every ollama request sizes its context window to its prompt (bead 0km).
+
+    Nothing ever set num_ctx, so long prompts silently clipped to the server's
+    default context (2048/4096) and produced empty or degenerate completions.
+    The native /api/chat call now carries options.num_ctx computed from the
+    actual messages, so the prompt always fits.
+    """
+
+    def test_num_ctx_sizes_from_actual_prompt(self):
+        """Formula: prompt chars / 4 (conservative) + response budget + slack."""
+        service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=6000,
+            service="ollama",
+            lazy_init=True,
+        )
+        messages = [{"role": "user", "content": "x" * 4000}]
+
+        assert service._num_ctx(messages) == 4000 // 4 + 500 + 512
+
+    def test_num_ctx_exceeds_default_context_for_production_emails(self):
+        """A max_content_length=6000 email clears the historical 2048 default."""
+        service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=6000,
+            service="ollama",
+            lazy_init=True,
+        )
+        messages = [{"role": "user", "content": "Subject: review\n\n" + "word " * 1200}]
+
+        assert service._num_ctx(messages) > 2048
+
+    def test_request_carries_num_ctx_options(self):
+        """The native call carries options.num_ctx sized for the prompt."""
+        with (
+            patch.object(LLMService, "_ensure_ollama_running"),
+            patch("email_labeler.llm_service.httpx.post") as mock_post,
+        ):
+            service = LLMService(
+                categories=TEST_CATEGORIES,
+                max_content_length=TEST_MAX_CONTENT_LENGTH,
+                service="ollama",
+                model="qwen2.5:7b",
+                timeout=60,
+            )
+            mock_post.return_value.json.return_value = {
+                "message": {"content": '{"category": "Work", "explanation": "ok"}'}
+            }
+
+            service.categorize_email("Subject: Quarterly review\nFrom: cfo@example.com\n\nPlease review.")
+
+        kwargs = mock_post.call_args[1]
+        assert kwargs["url"] == llm_service_module.OLLAMA_BASE_URL.replace("/v1", "") + "/api/chat"
+        assert kwargs["timeout"] == 60
+        body = kwargs["json"]
+        assert body["model"] == "qwen2.5:7b"
+        assert body["stream"] is False
+        options = body["options"]
+        assert options["num_predict"] == 500
+        assert options["temperature"] == service.temperature
+        assert options["num_ctx"] == service._num_ctx(body["messages"])
+
+    def test_http_error_raises_and_logs(self):
+        """A non-2xx ollama response surfaces as LLMCategorizationError, not silence."""
+        with (
+            patch.object(LLMService, "_ensure_ollama_running"),
+            patch("email_labeler.llm_service.httpx.post") as mock_post,
+        ):
+            service = LLMService(
+                categories=TEST_CATEGORIES,
+                max_content_length=TEST_MAX_CONTENT_LENGTH,
+                service="ollama",
+            )
+            mock_post.return_value.raise_for_status.side_effect = RuntimeError(
+                "ollama returned 500"
+            )
+
+            with pytest.raises(LLMCategorizationError, match="ollama returned 500"):
+                service.categorize_email("Subject: test\n\nbody")
+
+        entries = read_error_log()
+        assert len(entries) == 1
+        assert "ollama returned 500" in entries[0]["error"]
+
+    def test_ollama_request_timeout_from_transform_config(self):
+        """The ollama native request carries timeout=TransformConfig.timeout."""
         config = TransformConfig(llm_service="ollama", timeout=120)
         with (
-            patch("email_labeler.llm_service.OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-            patch("email_labeler.llm_service.httpx.get"),  # ollama counts as running
-            patch("email_labeler.llm_service.OpenAI") as mock_openai,
+            patch.object(LLMService, "_ensure_ollama_running"),
+            patch("email_labeler.llm_service.httpx.post") as mock_post,
         ):
-            LLMService(
+            service = LLMService(
                 categories=TEST_CATEGORIES,
                 max_content_length=TEST_MAX_CONTENT_LENGTH,
                 service=config.llm_service,
                 timeout=config.timeout,
             )
+            mock_post.return_value.json.return_value = {
+                "message": {"content": '{"category": "Work", "explanation": "ok"}'}
+            }
+            service.categorize_email("Subject: test\n\nbody")
 
-        mock_openai.assert_called_once_with(
-            base_url="http://localhost:11434/v1", api_key="ollama", timeout=120
-        )
+        assert mock_post.call_args[1]["timeout"] == 120
 
     def test_lazy_init_applies_timeout_on_first_use(self):
         """lazy_init defers client construction, but the deferred one still times out."""
