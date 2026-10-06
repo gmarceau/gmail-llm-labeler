@@ -328,5 +328,70 @@ class TestCli(LogToolTestCase):
         self.assertIn("qwen2.5:7b", out)  # error records have no service field
 
 
+class TestDump(LogToolTestCase):
+    def _dumped(self, argv: list) -> list:
+        out = self.run_cli(argv)
+        return [json.loads(line) for line in out.splitlines()]
+
+    def test_bare_invocation_dumps_enriched_jsonl(self):
+        _write_log(
+            self.log,
+            [
+                _interaction(0),
+                _interaction(60, processed_email="Test email", model="gpt-3.5-turbo"),
+            ],
+        )
+        records = self._dumped(["--log", str(self.log)])
+        self.assertEqual(len(records), 2)
+        rec = records[0]
+        self.assertEqual(
+            rec,
+            {
+                "time": "2026-10-04T11:00:00",
+                "is_production": True,
+                "service": "ollama",
+                "model": "qwen2.5:7b",
+                "duration": 4.0,
+                "outcome": "main",
+                "explanation": "x",
+                "subject": "Hello",
+                "sender": "a@b.com",
+                "email": "Subject: Hello\nFrom: a@b.com\n\nbody",
+            },
+        )
+        self.assertFalse(records[1]["is_production"])
+        self.assertEqual(records[1]["subject"], "Test email")
+
+    def test_dump_subcommand_honors_filters(self):
+        _write_log(
+            self.log,
+            [
+                _interaction(0),
+                _interaction(60, processed_email="Test email", model="gpt-3.5-turbo"),
+                _interaction(2 * 3600),
+            ],
+        )
+        real = self._dumped(["--log", str(self.log), "dump", "--real"])
+        self.assertEqual([r["subject"] for r in real], ["Hello", "Hello"])
+        test = self._dumped(["--log", str(self.log), "dump", "--test"])
+        self.assertEqual([r["subject"] for r in test], ["Test email"])
+        since = self._dumped(["--log", str(self.log), "dump", "--since", "2026-10-04 12:00"])
+        self.assertEqual(len(since), 1)
+
+    def test_dump_empty_and_unparseable_responses(self):
+        _write_log(
+            self.log,
+            [
+                _interaction(0, response=""),
+                _interaction(60, response="not json"),
+            ],
+        )
+        records = self._dumped(["--log", str(self.log), "dump"])
+        self.assertEqual(records[0]["outcome"], "EMPTY")
+        self.assertIsNone(records[0]["explanation"])
+        self.assertEqual(records[1]["outcome"], "PARSE-FAIL")
+        self.assertIsNone(records[1]["explanation"])
+
+
 if __name__ == "__main__":
     unittest.main()

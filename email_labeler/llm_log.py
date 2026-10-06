@@ -9,10 +9,17 @@ Production records are told from test-suite pollution structurally:
 pipeline prompts always start with the "Subject: " line built by
 TransformStage._build_email_content, while test fixtures pass bare
 strings like "Test email".
+
+Bare invocation (no subcommand) dumps every record as one enriched
+JSON line — pipe to yq/jq/grep for ad-hoc analysis; every filter
+(production-only, time range, sender) is a select in the pipe tool.
+The human subcommands (days/runs/show) summarize instead. The error
+log needs no dump mode: it is already compact JSONL.
 """
 
 import argparse
 import json
+import os
 import statistics
 import sys
 from collections import Counter
@@ -64,6 +71,42 @@ class Record:
     def first_line(self) -> str:
         email = self.raw.get("processed_email") or self.raw.get("email_preview") or ""
         return email.split("\n", 1)[0]
+
+    @property
+    def subject(self) -> str:
+        line = self.first_line
+        return line[len(PRODUCTION_PREFIX) :] if line.startswith(PRODUCTION_PREFIX) else line
+
+    @property
+    def sender(self) -> str:
+        email = self.raw.get("processed_email") or ""
+        for line in email.split("\n"):
+            if line.startswith("From: "):
+                return line[len("From: ") :]
+        return ""
+
+    def enriched(self) -> Dict[str, Any]:
+        """Flat, pipe-friendly projection: one JSON line per record."""
+        explanation = None
+        if self.raw.get("response"):
+            try:
+                parsed = json.loads(self.raw["response"])
+            except (TypeError, json.JSONDecodeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                explanation = parsed.get("explanation")
+        return {
+            "time": self.time.isoformat(timespec="seconds"),
+            "is_production": self.is_production,
+            "service": self.raw.get("service"),
+            "model": self.raw.get("model"),
+            "duration": self.raw.get("duration"),
+            "outcome": self.outcome,
+            "explanation": explanation,
+            "subject": self.subject,
+            "sender": self.sender,
+            "email": self.raw.get("processed_email") or self.raw.get("email_preview") or "",
+        }
 
 
 def _record_time(raw: Dict[str, Any]) -> datetime:
@@ -137,6 +180,23 @@ def _selected_records(args: argparse.Namespace) -> List[Record]:
     return records
 
 
+def _visibility_filter(records: List[Record], args: argparse.Namespace) -> List[Record]:
+    """Apply --real/--test if either was set."""
+    if getattr(args, "real", False):
+        return [r for r in records if r.is_production]
+    if getattr(args, "test", False):
+        return [r for r in records if not r.is_production]
+    return records
+
+
+def cmd_dump(args: argparse.Namespace) -> int:
+    """Emit enriched records as JSON lines — pipe to yq/jq/grep."""
+    records = _visibility_filter(_selected_records(args), args)
+    for rec in records:
+        print(json.dumps(rec.enriched(), ensure_ascii=False))
+    return 0
+
+
 def cmd_days(args: argparse.Namespace) -> int:
     by_date: Dict[str, List[Record]] = {}
     for rec in _selected_records(args):
@@ -168,11 +228,7 @@ def cmd_runs(args: argparse.Namespace) -> int:
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    records = _selected_records(args)
-    if args.real:
-        records = [r for r in records if r.is_production]
-    elif args.test:
-        records = [r for r in records if not r.is_production]
+    records = _visibility_filter(_selected_records(args), args)
     for rec in records:
         if args.full:
             print(json.dumps(rec.raw, indent=2))
@@ -205,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--errors-log", default=ERROR_LOG_FILE, help="error log file (default: %(default)s)"
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     def add(name: str, help: str) -> argparse.ArgumentParser:
         sp = sub.add_parser(name, help=help)
@@ -216,6 +272,11 @@ def build_parser() -> argparse.ArgumentParser:
             help="only records at/after this time",
         )
         return sp
+
+    dump = add("dump", help="enriched records as JSON lines (pipe to yq/jq/grep)")
+    dump.add_argument("--real", action="store_true", help="only production records")
+    dump.add_argument("--test", action="store_true", help="only test-suite pollution")
+    dump.set_defaults(func=cmd_dump)
 
     days = add("days", help="per-day counts, production vs test pollution")
     days.add_argument(
@@ -245,7 +306,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    if args.command is None:  # bare invocation: dump everything
+        args.command = "dump"
+        args.func = cmd_dump
+        args.since = None
+        args.real = False
+        args.test = False
+    try:
+        return args.func(args)
+    except BrokenPipeError:
+        # Downstream (head/grep/yq) closed the pipe — exit quietly.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
 
 
 if __name__ == "__main__":
