@@ -7,6 +7,7 @@ import pytest
 
 from email_labeler import llm_service as llm_service_module
 from email_labeler.llm_service import LLMCategorizationError, LLMService
+from email_labeler.pipeline.config import TransformConfig
 
 # Test categories for all tests
 TEST_CATEGORIES = ["Marketing", "Work", "Personal", "Bills", "Newsletters", "Other"]
@@ -43,7 +44,7 @@ class TestLLMService:
                 service="openai",
             )
 
-            mock_openai.assert_called_once_with(api_key="test-key")
+            mock_openai.assert_called_once_with(api_key="test-key", timeout=30)
             # No model passed -> the per-service default
             assert service.model == "gpt-4o-mini"
 
@@ -61,7 +62,7 @@ class TestLLMService:
             )
 
             mock_openai.assert_called_once_with(
-                base_url="http://localhost:11434/v1", api_key="ollama"
+                base_url="http://localhost:11434/v1", api_key="ollama", timeout=30
             )
             # No model passed -> the per-service default
             assert service.model == "llama3.1"
@@ -225,7 +226,7 @@ class TestLLMService:
             )
             service._get_llm_client()
 
-            mock_openai.assert_called_with(api_key="test-key")
+            mock_openai.assert_called_with(api_key="test-key", timeout=30)
 
     def test_get_llm_client_ollama(self):
         """Test getting Ollama client."""
@@ -242,7 +243,9 @@ class TestLLMService:
             )
             service._get_llm_client()
 
-            mock_openai.assert_called_with(base_url="http://localhost:11434/v1", api_key="ollama")
+            mock_openai.assert_called_with(
+                base_url="http://localhost:11434/v1", api_key="ollama", timeout=30
+            )
 
     @pytest.mark.parametrize(
         "content,expected_category",
@@ -591,6 +594,70 @@ class TestLLMService:
         messages = call_args[1]["messages"]
 
         assert "Reasoning: high" in messages[0]["content"]
+
+
+class TestClientTimeout:
+    """Every constructed LLM client carries a request timeout (bead omm).
+
+    A scheduled run whose LLM call never returned hung for 27 days in select()
+    on a socket — no client may be constructed without a timeout again. The
+    timeout source is TransformConfig.timeout (the yaml transform.timeout knob),
+    passed the same way the pipeline passes it.
+    """
+
+    def test_openai_client_timeout_from_transform_config(self):
+        """The openai-path client is constructed with timeout=TransformConfig.timeout."""
+        config = TransformConfig(llm_service="openai", timeout=120)
+        with (
+            patch("email_labeler.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("email_labeler.llm_service.OpenAI") as mock_openai,
+        ):
+            LLMService(
+                categories=TEST_CATEGORIES,
+                max_content_length=TEST_MAX_CONTENT_LENGTH,
+                service=config.llm_service,
+                timeout=config.timeout,
+            )
+
+        mock_openai.assert_called_once_with(api_key="test-key", timeout=120)
+
+    def test_ollama_client_timeout_from_transform_config(self):
+        """The ollama-path client (OpenAI-compatible base_url) gets the same timeout."""
+        config = TransformConfig(llm_service="ollama", timeout=120)
+        with (
+            patch("email_labeler.llm_service.OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+            patch("email_labeler.llm_service.httpx.get"),  # ollama counts as running
+            patch("email_labeler.llm_service.OpenAI") as mock_openai,
+        ):
+            LLMService(
+                categories=TEST_CATEGORIES,
+                max_content_length=TEST_MAX_CONTENT_LENGTH,
+                service=config.llm_service,
+                timeout=config.timeout,
+            )
+
+        mock_openai.assert_called_once_with(
+            base_url="http://localhost:11434/v1", api_key="ollama", timeout=120
+        )
+
+    def test_lazy_init_applies_timeout_on_first_use(self):
+        """lazy_init defers client construction, but the deferred one still times out."""
+        config = TransformConfig(llm_service="openai", timeout=120)
+        with (
+            patch("email_labeler.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("email_labeler.llm_service.OpenAI") as mock_openai,
+        ):
+            service = LLMService(
+                categories=TEST_CATEGORIES,
+                max_content_length=TEST_MAX_CONTENT_LENGTH,
+                service=config.llm_service,
+                timeout=config.timeout,
+                lazy_init=True,
+            )
+            assert service.llm_client is None
+            service._ensure_llm_client()
+
+        mock_openai.assert_called_once_with(api_key="test-key", timeout=120)
 
 
 class TestResolveOllamaBinary:

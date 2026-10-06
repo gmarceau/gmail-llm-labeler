@@ -69,6 +69,7 @@ class EmailPipeline:
                 model=self.config.transform.model,
                 gpt_oss_reasoning=self.config.transform.gpt_oss_reasoning,
                 temperature=self.config.transform.temperature,
+                timeout=self.config.transform.timeout,
                 system_prompt=self.config.transform.system_prompt,
                 user_prompt=self.config.transform.user_prompt,
                 lazy_init=True,

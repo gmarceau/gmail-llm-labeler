@@ -99,6 +99,7 @@ class LLMService:
         system_prompt: Optional[str] = None,
         user_prompt: Optional[str] = None,
         temperature: float = 0.0,
+        timeout: int = 30,
     ):
         """Initialize the LLM client.
 
@@ -118,6 +119,10 @@ class LLMService:
             system_prompt: Optional custom system prompt with template support.
             user_prompt: Optional custom user prompt with template support.
             temperature: Sampling temperature.
+            timeout: Request timeout (seconds) for the constructed client — a hung
+                call fails fast instead of parking the pipeline forever. Mirrors the
+                TransformConfig.timeout default; the pipeline always passes the
+                config value.
         """
         service = service.lower()
         if service not in _SUPPORTED_SERVICES:
@@ -131,6 +136,7 @@ class LLMService:
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         self.temperature = temperature
+        self.timeout = timeout
         self.gpt_oss_reasoning = gpt_oss_reasoning
         self.model = model or _DEFAULT_MODELS[service]
         self.llm_client: Optional[OpenAI] = llm_client
@@ -166,14 +172,21 @@ class LLMService:
         raise RuntimeError("Timed out waiting for ollama serve to start")
 
     def _get_llm_client(self) -> OpenAI:
-        """Get the client for the selected service (self.service)."""
+        """Get the client for the selected service (self.service).
+
+        Both paths pass self.timeout: a client without a request timeout parks
+        its thread in select() forever when the call never returns (observed:
+        a scheduled run hung for 27 days on one such call).
+        """
         if self.service == "ollama":
             self._ensure_ollama_running()
             logging.debug(f"Using Ollama at {OLLAMA_BASE_URL} with model {self.model}")
-            return OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")  # Dummy key for Ollama
+            return OpenAI(  # Dummy key for Ollama
+                base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=self.timeout
+            )
         else:
             logging.info(f"Using OpenAI with model {self.model}")
-            return OpenAI(api_key=OPENAI_API_KEY)
+            return OpenAI(api_key=OPENAI_API_KEY, timeout=self.timeout)
 
     def _render_template(self, template: str, variables: Dict[str, str]) -> str:
         """Render a template string with provided variables.

@@ -70,6 +70,17 @@ class TestTransformConfigRoundTrip:
 
         assert loaded.transform.llm_body_head_lines == 42
 
+    def test_timeout_round_trips(self, tmp_path):
+        """transform.timeout survives a yaml round-trip (bead omm: it was a dead
+        knob — written by to_yaml but read by nothing)."""
+        config = PipelineConfig(transform=TransformConfig(timeout=42))
+        path = str(tmp_path / "config.yaml")
+        config.to_yaml(path)
+
+        loaded = PipelineConfig.from_yaml(path)
+
+        assert loaded.transform.timeout == 42
+
     def test_escalation_round_trips(self, tmp_path):
         config = PipelineConfig(
             transform=TransformConfig(escalation=EscalationConfig(enabled=True, body_head_lines=7))
@@ -542,6 +553,21 @@ class TestColdOutreachConfig:
 
         assert service.service == "ollama"
         assert service.model == "qwen2.5:7b"
+
+    def test_llm_timeout_flows_from_yaml_into_service(self, prod_config):
+        """Bead omm: the production yaml's transform.timeout (120 for the 7b
+        model) flows into the LLMService the pipeline constructs — where it
+        reaches the OpenAI client constructor as the request timeout."""
+        assert prod_config.transform.timeout == 120
+
+        service = LLMService(
+            categories=prod_config.transform.categories,
+            service=prod_config.transform.llm_service,
+            timeout=prod_config.transform.timeout,
+            llm_client=MagicMock(),
+        )
+
+        assert service.timeout == 120
 
 
 class TestPathConfig:

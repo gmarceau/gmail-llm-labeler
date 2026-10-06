@@ -1,11 +1,15 @@
 """Tests for gmail_utils functions."""
 
+from unittest.mock import MagicMock, patch
+
 from email_labeler.gmail_utils import (
+    GMAIL_API_TIMEOUT,
     compute_sender_signals,
     extract_address,
     extract_domain,
     format_classification_headers,
     format_signals_block,
+    get_gmail_client,
     strip_reply_prefix,
 )
 
@@ -220,3 +224,43 @@ class TestFormatSignalsBlock:
         assert "- one fact" in block
         assert "- two facts" in block
 
+
+class TestGetGmailClient:
+    """get_gmail_client's transport carries a socket timeout (bead omm).
+
+    httplib2's default is to block forever, and a wedged Gmail call parked a
+    scheduled run for 27 days — so the client is built over a timed http.
+    """
+
+    def test_http_carries_timeout(self, tmp_path):
+        token_file = tmp_path / "token.json"
+        credentials_file = tmp_path / "credentials.json"
+        token_file.write_text("{}")  # existence selects the token-load path
+        credentials_file.write_text("{}")
+
+        # A valid token skips refresh and the interactive OAuth flow.
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+
+        with (
+            patch(
+                "email_labeler.gmail_utils.Credentials.from_authorized_user_file",
+                return_value=mock_creds,
+            ),
+            patch("email_labeler.gmail_utils.build") as mock_build,
+        ):
+            client = get_gmail_client(
+                token_file=str(token_file), credentials_file=str(credentials_file)
+            )
+
+        assert client is mock_build.return_value
+        call = mock_build.call_args
+        assert call.args == ("gmail", "v1")
+        # build() rejects http= together with credentials= (v2.x), so the creds
+        # ride inside the AuthorizedHttp — never both kwargs at once.
+        assert set(call.kwargs) == {"http"}
+
+        # AuthorizedHttp: OAuth refresh layered over a timed httplib2.Http.
+        http = call.kwargs["http"]
+        assert http.credentials is mock_creds
+        assert http.http.timeout == GMAIL_API_TIMEOUT
