@@ -367,6 +367,25 @@ def mock_logging():
         yield
 
 
+@pytest.fixture(autouse=True)
+def isolate_llm_logs(tmp_path, monkeypatch):
+    """Redirect LLMService's log files to tmp_path so no test can write to the
+    production logs (~/.local/share/gmail-llm-labeler/logs/).
+
+    llm_service.py from-imports LLM_LOG_FILE/ERROR_LOG_FILE from config, so
+    the production paths are copied into email_labeler.llm_service's own
+    namespace at import time — patching email_labeler.config has no effect on
+    _log_interaction/_log_error. Autouse: every test that constructs a real
+    LLMService (mocked client, real categorize_email) is redirected, no opt-out.
+    """
+    monkeypatch.setattr(
+        "email_labeler.llm_service.LLM_LOG_FILE", str(tmp_path / "llm_interactions.json")
+    )
+    monkeypatch.setattr(
+        "email_labeler.llm_service.ERROR_LOG_FILE", str(tmp_path / "categorization_errors.log")
+    )
+
+
 @pytest.fixture
 def cli_args():
     """Create sample CLI arguments for testing."""
