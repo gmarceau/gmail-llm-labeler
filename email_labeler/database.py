@@ -103,6 +103,15 @@ class EmailDatabase:
         """Update email labels in the database and mark as processed."""
         current_time = datetime.now().isoformat()
 
+        # Capture the prior labels before the row is replaced — a subselect in
+        # the history insert would only ever see the just-written new labels.
+        self.cursor.execute(
+            "SELECT labels FROM email_labels WHERE email_id = ?",
+            (email_id,),
+        )
+        prior = self.cursor.fetchone()
+        old_labels = prior[0] if prior else None
+
         # Update or insert email labels
         self.cursor.execute(
             """
@@ -116,12 +125,9 @@ class EmailDatabase:
         self.cursor.execute(
             """
             INSERT INTO label_history (email_id, old_labels, new_labels, timestamp)
-            VALUES (?,
-                    (SELECT labels FROM email_labels WHERE email_id = ?),
-                    ?,
-                    ?)
+            VALUES (?, ?, ?, ?)
         """,
-            (email_id, email_id, json.dumps(label_ids), current_time),
+            (email_id, old_labels, json.dumps(label_ids), current_time),
         )
 
         # Mark email as processed

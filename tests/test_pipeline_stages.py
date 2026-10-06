@@ -1,9 +1,11 @@
 """Tests for pipeline stages."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from email_labeler.database import EmailDatabase
 from email_labeler.email_processor import EmailProcessor
 from email_labeler.llm_service import LLMCategorizationError, LLMService
 from email_labeler.pipeline.base import (
@@ -1448,6 +1450,125 @@ class TestLoadStage:
         assert len(results) == 100
         assert all(result.success for result in results)
 
+    def test_apply_label_records_applied_label_id(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """apply_label records the concrete label ID the run applied."""
+        pipeline_config.load.default_actions = ["apply_label"]
+        mock_email_processor.get_or_create_label.return_value = "Label_71"
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        email = EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category="marketing",
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+        results = stage.execute([email], pipeline_context)
+
+        assert results[0].success
+        assert results[0].applied_label_ids == ["Label_71"]
+
+    def test_apply_category_tab_records_system_label_id(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """apply_category_tab records the CATEGORY_* system label ID it applied."""
+        pipeline_config.load.default_actions = ["apply_category_tab"]
+        pipeline_config.load.category_tab_map = {"marketing": "updates"}
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        email = EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category="marketing",
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+        with patch(
+            "email_labeler.pipeline.load_stage.add_labels_to_email", return_value=True
+        ):
+            results = stage.execute([email], pipeline_context)
+
+        assert results[0].success
+        assert results[0].applied_label_ids == ["CATEGORY_UPDATES"]
+
+    def test_star_action_records_starred_label_id(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """star records the STARRED system label ID it applied."""
+        pipeline_config.load.default_actions = ["star"]
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        email = EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category="marketing",
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+        with patch(
+            "email_labeler.pipeline.load_stage.add_labels_to_email", return_value=True
+        ):
+            results = stage.execute([email], pipeline_context)
+
+        assert results[0].success
+        assert results[0].applied_label_ids == ["STARRED"]
+
+    def test_failed_apply_label_records_no_label_ids(
+        self, mock_email_processor, pipeline_config, pipeline_context
+    ):
+        """A failed apply_label records no label IDs, only the failure."""
+        pipeline_config.load.default_actions = ["apply_label"]
+        mock_email_processor.get_or_create_label.return_value = None
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+
+        email = EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category="marketing",
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+        results = stage.execute([email], pipeline_context)
+
+        assert not results[0].success
+        assert results[0].applied_label_ids == []
+
+    @pytest.mark.parametrize("mode", ["dry_run", "preview_mode"])
+    def test_dry_run_and_preview_record_no_applied_label_ids(
+        self, mock_email_processor, pipeline_config, sample_enriched_email_records, mode
+    ):
+        """Dry-run and preview apply nothing to Gmail, so no label IDs are recorded."""
+        stage = LoadStage(pipeline_config.load, mock_email_processor)
+        context = PipelineContext.create(config=pipeline_config, **{mode: True})
+
+        results = stage.execute(sample_enriched_email_records, context)
+
+        assert all(result.success for result in results)
+        assert all(result.applied_label_ids == [] for result in results)
+        mock_email_processor.add_labels_to_email.assert_not_called()
+
 
 class TestSyncStage:
     """Test cases for SyncStage."""
@@ -1696,3 +1817,117 @@ class TestColdOutreachLoadRouting:
         mock_add.assert_called_once_with(
             mock_email_processor.gmail, "msg1", ["CATEGORY_UPDATES"]
         )
+
+
+class TestLoadSyncLabelRecording:
+    """The DB records the label IDs the load stage actually applied (gmail-llm-labeler-14e).
+
+    LoadStage runs against a mocked Gmail client; SyncStage runs against a real
+    SQLite tmp database, so email_labels.labels and label_history carry the
+    concrete IDs the (mocked) load stage applied — the syndesus shape: a user
+    Label_XX plus a CATEGORY_* tab label. Live-mailbox verification is deferred
+    to the next real scheduled run.
+    """
+
+    def _email(self, category="marketing"):
+        return EnrichedEmailRecord(
+            id="msg1",
+            subject="Test",
+            sender="s@example.com",
+            content="c",
+            received_date="2024-01-01T10:00:00Z",
+            category=category,
+            explanation="x",
+            confidence=0.9,
+            processing_time=1.0,
+        )
+
+    def _configure(self, pipeline_config):
+        """Shape the run like the syndesus case: label + updates tab, no metrics file."""
+        pipeline_config.load.category_actions = {}
+        pipeline_config.load.default_actions = ["apply_label", "apply_category_tab"]
+        pipeline_config.load.category_tab_map = {"marketing": "updates"}
+        pipeline_config.sync.save_metrics = False
+
+    def _run_load_then_sync(
+        self, pipeline_config, mock_email_processor, context, database, category_label_id
+    ):
+        """Run load -> sync once for the sample email; return the load results."""
+        mock_email_processor.get_or_create_label.return_value = category_label_id
+        with patch(
+            "email_labeler.pipeline.load_stage.add_labels_to_email", return_value=True
+        ):
+            load_results = LoadStage(pipeline_config.load, mock_email_processor).execute(
+                [self._email()], context
+            )
+        SyncStage(pipeline_config.sync, database, MagicMock()).execute(load_results, context)
+        return load_results
+
+    def test_load_then_sync_records_applied_label_ids_in_db(
+        self, mock_email_processor, pipeline_config, tmp_path
+    ):
+        """A real load -> sync run lands the applied label IDs in email_labels and label_history."""
+        self._configure(pipeline_config)
+        context = PipelineContext.create(config=pipeline_config)
+        db = EmailDatabase(database_file=str(tmp_path / "labels.db"))
+
+        load_results = self._run_load_then_sync(
+            pipeline_config, mock_email_processor, context, db, "Label_71"
+        )
+
+        expected = ["Label_71", "CATEGORY_UPDATES"]
+        assert load_results[0].applied_label_ids == expected
+
+        category, labels = db.get_email_labels("msg1")
+        assert category == "marketing"
+        assert labels == expected
+
+        db.cursor.execute(
+            "SELECT old_labels, new_labels FROM label_history WHERE email_id = ?", ("msg1",)
+        )
+        old_labels, new_labels = db.cursor.fetchone()
+        assert old_labels is None  # first run: the email had no prior labels row
+        assert json.loads(new_labels) == expected
+        assert db.is_email_processed("msg1")
+        db.close()
+
+    def test_relabel_run_populates_label_history_old_and_new(
+        self, mock_email_processor, pipeline_config, tmp_path
+    ):
+        """A second run's history row carries the first run's labels as old_labels."""
+        self._configure(pipeline_config)
+        context = PipelineContext.create(config=pipeline_config)
+        db = EmailDatabase(database_file=str(tmp_path / "labels.db"))
+
+        self._run_load_then_sync(pipeline_config, mock_email_processor, context, db, "Label_71")
+        self._run_load_then_sync(pipeline_config, mock_email_processor, context, db, "Label_99")
+
+        db.cursor.execute(
+            "SELECT old_labels, new_labels FROM label_history WHERE email_id = ? ORDER BY id",
+            ("msg1",),
+        )
+        first, second = db.cursor.fetchall()
+        assert json.loads(first[1]) == ["Label_71", "CATEGORY_UPDATES"]
+        assert json.loads(second[0]) == ["Label_71", "CATEGORY_UPDATES"]  # old
+        assert json.loads(second[1]) == ["Label_99", "CATEGORY_UPDATES"]  # new
+        db.close()
+
+    @pytest.mark.parametrize("mode", ["dry_run", "preview_mode"])
+    def test_dry_run_and_preview_write_nothing_to_database(
+        self, mock_email_processor, pipeline_config, tmp_path, mode
+    ):
+        """Dry-run and preview leave every sync-written table empty."""
+        self._configure(pipeline_config)
+        context = PipelineContext.create(config=pipeline_config, **{mode: True})
+        db = EmailDatabase(database_file=str(tmp_path / "labels.db"))
+
+        load_results = self._run_load_then_sync(
+            pipeline_config, mock_email_processor, context, db, "Label_71"
+        )
+
+        assert load_results[0].applied_label_ids == []
+        for table in ("email_labels", "label_history", "processed_emails"):
+            db.cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            assert db.cursor.fetchone()[0] == 0, table
+        assert not db.is_email_processed("msg1")
+        db.close()

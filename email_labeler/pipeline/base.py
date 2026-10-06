@@ -39,6 +39,10 @@ class ActionResult:
     actions_taken: List[str]
     success: bool
     errors: List[str] = field(default_factory=list)
+    # Concrete Gmail label IDs the load stage actually applied (e.g. "Label_71",
+    # "CATEGORY_UPDATES", "STARRED"). Empty in dry-run/preview, where nothing
+    # is applied; the sync stage persists them as email_labels.labels.
+    applied_label_ids: List[str] = field(default_factory=list)
 
 
 @dataclass

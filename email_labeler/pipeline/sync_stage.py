@@ -108,9 +108,6 @@ class SyncStage(PipelineStage):
 
     def _sync_email_result(self, result: ActionResult, context: PipelineContext):
         """Sync a single email result to database."""
-        # Extract label IDs from actions
-        label_ids = self._extract_label_ids(result.actions_taken)
-
         # Update database
         if context.preview_mode:
             logger.info(
@@ -118,30 +115,17 @@ class SyncStage(PipelineStage):
                 f"with category '{result.category}'"
             )
         else:
+            # The load stage reports the concrete Gmail label IDs it applied;
+            # they land in email_labels.labels and label_history.
             self.database.update_email_labels(
-                email_id=result.email_id, category=result.category, label_ids=label_ids
+                email_id=result.email_id,
+                category=result.category,
+                label_ids=result.applied_label_ids,
             )
 
             # If tracking history, add a history entry
             if self.config.track_history:
                 self._add_history_entry(result, context)
-
-    def _extract_label_ids(self, actions_taken: List[str]) -> List[str]:
-        """Extract label IDs from actions taken."""
-        label_ids = []
-
-        for action in actions_taken:
-            # Remove preview/dry-run prefixes
-            clean_action = action.replace("[preview] ", "").replace("[dry-run] ", "")
-
-            # Extract label information from actions
-            if clean_action.startswith("label:"):
-                label_name = clean_action.replace("label:", "")
-                # In a real implementation, we'd look up the label ID
-                # For now, we'll just use the label name
-                label_ids.append(label_name)
-
-        return label_ids
 
     def _add_history_entry(self, result: ActionResult, context: PipelineContext):
         """Add a history entry for the processed email."""
