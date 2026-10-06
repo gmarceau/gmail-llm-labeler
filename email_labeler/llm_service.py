@@ -303,7 +303,12 @@ class LLMService:
         return response.choices[0].message.content  # type: ignore[no-any-return]
 
     def _parse_response(self, response_text: str, subject: str = "Unknown") -> Tuple[str, str]:
-        """Parse and validate the LLM response."""
+        """Parse and validate the LLM response.
+
+        Empty, unparseable, or unknown-category responses raise ValueError;
+        categorize_email turns that into an error-log entry and an
+        LLMCategorizationError — never a silently invented category.
+        """
         response_text = response_text.strip()
         logging.debug(f"Subject: {subject}")
         logging.debug(f"LLM response: {response_text[:500]}")
@@ -314,27 +319,37 @@ class LLMService:
             category = response_json.get("category", "").strip()
             explanation = response_json.get("explanation", "").strip()
             logging.debug(f"Categorized as: {category} - {explanation}")
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             logging.warning("Failed to parse JSON response, attempting text extraction")
             # Fallback: try to extract category from text
             for label in self.categories:
                 if label.lower() in response_text.lower():
                     logging.info(f"Extracted category '{label}' from non-JSON response")
                     return label, "Extracted from response"
-            return "Other", "Failed to parse response"
+            raise ValueError(
+                f"Unparseable LLM response (not JSON, no configured category name in text): "
+                f"{response_text[:200]!r}"
+            ) from e
 
         # Validate category
         if category in self.categories:
             return category, explanation
-        else:
-            # Try fuzzy matching
-            category_lower = category.lower()
-            for label in self.categories:
-                if label.lower() in category_lower or category_lower in label.lower():
-                    logging.info(f"Fuzzy matched '{category}' to '{label}'")
-                    return label, explanation
-            logging.warning(f"Category '{category}' not in predefined list")
-            return "Other", f"Unknown category: {category}"
+
+        if not category:
+            # An empty 'category' field fuzzy-matches the first configured label
+            # ("" is "in" every string) — a silent invention, not a match.
+            raise ValueError("LLM response JSON has an empty 'category' field")
+
+        # Try fuzzy matching
+        category_lower = category.lower()
+        for label in self.categories:
+            if label.lower() in category_lower or category_lower in label.lower():
+                logging.info(f"Fuzzy matched '{category}' to '{label}'")
+                return label, explanation
+        logging.warning(f"Category '{category}' not in predefined list")
+        raise ValueError(
+            f"Unknown category {category!r}: not among configured categories {self.categories}"
+        )
 
     def _log_interaction(self, start_time: float, end_time: float, response: str, email_content: str):
         """Log the LLM interaction for debugging."""
