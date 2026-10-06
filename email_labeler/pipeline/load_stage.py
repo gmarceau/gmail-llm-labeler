@@ -120,6 +120,7 @@ class LoadStage(PipelineStage):
     def _process_email(self, email: EnrichedEmailRecord, context: PipelineContext) -> ActionResult:
         """Apply actions for a single email."""
         actions_taken = []
+        applied_label_ids: List[str] = []
         errors = []
 
         # Get actions for category
@@ -151,11 +152,12 @@ class LoadStage(PipelineStage):
                     actions_taken.append(f"[dry-run] {action}")
 
                 else:
-                    success = self._apply_action(email, action, context)
-                    if success:
-                        actions_taken.append(action)
-                    else:
+                    labels = self._apply_action(email, action, context)
+                    if labels is None:
                         errors.append(f"{action}: failed")
+                    else:
+                        actions_taken.append(action)
+                        applied_label_ids.extend(labels)
 
             except Exception as e:
                 error_msg = f"{action}: {str(e)}"
@@ -168,12 +170,17 @@ class LoadStage(PipelineStage):
             actions_taken=actions_taken,
             success=len(errors) == 0,
             errors=errors,
+            applied_label_ids=applied_label_ids,
         )
 
     def _apply_action(
         self, email: EnrichedEmailRecord, action: str, context: PipelineContext
-    ) -> bool:
-        """Apply a single action to an email."""
+    ) -> Optional[List[str]]:
+        """Apply a single action to an email.
+
+        Returns the Gmail label IDs the action applied, or None if it failed.
+        Actions that modify no labels (archive, mark_as_read) return [].
+        """
         try:
             if action == "apply_label":
                 return self._apply_label(email)
@@ -192,16 +199,16 @@ class LoadStage(PipelineStage):
 
             else:
                 logger.warning(f"Unknown action: {action}")
-                return False
+                return None
 
         except Exception as e:
             logger.error(f"Failed to apply action '{action}' to email {email.id}: {e}")
-            return False
+            return None
 
-    def _apply_label(self, email: EnrichedEmailRecord) -> bool:
+    def _apply_label(self, email: EnrichedEmailRecord) -> Optional[List[str]]:
         """Apply category label to email."""
         if not self.config.apply_labels:
-            return True
+            return []
 
         # Get label ID from cache
         label_id = self._label_cache.get(email.category)
@@ -211,39 +218,45 @@ class LoadStage(PipelineStage):
                 label_id = self.email_processor.get_or_create_label(email.category)
                 if label_id is None:
                     logger.error(f"Failed to get label for '{email.category}': returned None")
-                    return False
+                    return None
                 self._label_cache[email.category] = label_id
             except Exception as e:
                 logger.error(f"Failed to get label for '{email.category}': {e}")
-                return False
+                return None
 
         # Apply label
-        return self.email_processor.add_labels_to_email(email.id, [label_id])
+        if self.email_processor.add_labels_to_email(email.id, [label_id]):
+            return [label_id]
+        return None
 
-    def _archive_email(self, email: EnrichedEmailRecord) -> bool:
+    def _archive_email(self, email: EnrichedEmailRecord) -> Optional[List[str]]:
         """Archive email (remove from inbox)."""
-        return self.email_processor.remove_from_inbox(email.id)
+        return [] if self.email_processor.remove_from_inbox(email.id) else None
 
-    def _star_email(self, email: EnrichedEmailRecord) -> bool:
+    def _star_email(self, email: EnrichedEmailRecord) -> Optional[List[str]]:
         """Star an email."""
         # Add STARRED label
-        return add_labels_to_email(self.email_processor.gmail, email.id, ["STARRED"], [])
+        if add_labels_to_email(self.email_processor.gmail, email.id, ["STARRED"], []):
+            return ["STARRED"]
+        return None
 
-    def _mark_as_read(self, email: EnrichedEmailRecord) -> bool:
+    def _mark_as_read(self, email: EnrichedEmailRecord) -> Optional[List[str]]:
         """Mark email as read."""
-        return mark_as_read(self.email_processor.gmail, email.id)
+        return [] if mark_as_read(self.email_processor.gmail, email.id) else None
 
-    def _apply_category_tab(self, email: EnrichedEmailRecord) -> bool:
+    def _apply_category_tab(self, email: EnrichedEmailRecord) -> Optional[List[str]]:
         """Move email to the configured Gmail inbox tab."""
         tab_name = self.config.category_tab_map.get(email.category)
         if not tab_name:
             logger.debug(f"No category tab mapping for '{email.category}'")
-            return True
+            return []
         label_id = GMAIL_TAB_LABEL_IDS.get(tab_name)
         if not label_id:
             logger.warning(f"Unknown Gmail tab name: '{tab_name}'")
-            return False
-        return add_labels_to_email(self.email_processor.gmail, email.id, [label_id])
+            return None
+        if add_labels_to_email(self.email_processor.gmail, email.id, [label_id]):
+            return [label_id]
+        return None
 
     def _count_actions(self, results: List[ActionResult]) -> Dict[str, int]:
         """Count the number of each action type applied."""

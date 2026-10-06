@@ -126,19 +126,25 @@ class TestEmailDatabase:
         expected_time = mock_datetime.now.return_value.isoformat.return_value
         expected_labels_json = json.dumps(label_ids)
 
-        # Check that all three operations are called
+        # Check that all four operations are called
         calls = email_database.cursor.execute.call_args_list
 
-        # First call: INSERT OR REPLACE into email_labels
-        assert calls[0][0][0].strip().startswith("INSERT OR REPLACE INTO email_labels")
-        assert calls[0][0][1] == (email_id, expected_labels_json, category, expected_time)
+        # First call: SELECT the prior labels (mocked fetchone -> None, so no
+        # prior row and old_labels is NULL)
+        assert calls[0][0][0].strip().startswith("SELECT labels FROM email_labels")
+        assert calls[0][0][1] == (email_id,)
 
-        # Second call: INSERT into label_history
-        assert calls[1][0][0].strip().startswith("INSERT INTO label_history")
+        # Second call: INSERT OR REPLACE into email_labels
+        assert calls[1][0][0].strip().startswith("INSERT OR REPLACE INTO email_labels")
+        assert calls[1][0][1] == (email_id, expected_labels_json, category, expected_time)
 
-        # Third call: INSERT OR REPLACE into processed_emails
-        assert calls[2][0][0].strip().startswith("INSERT OR REPLACE INTO processed_emails")
-        assert calls[2][0][1] == (email_id, expected_time)
+        # Third call: INSERT into label_history with the captured old labels
+        assert calls[2][0][0].strip().startswith("INSERT INTO label_history")
+        assert calls[2][0][1] == (email_id, None, expected_labels_json, expected_time)
+
+        # Fourth call: INSERT OR REPLACE into processed_emails
+        assert calls[3][0][0].strip().startswith("INSERT OR REPLACE INTO processed_emails")
+        assert calls[3][0][1] == (email_id, expected_time)
 
         email_database.conn.commit.assert_called_once()
 
@@ -391,8 +397,9 @@ class TestEmailDatabase:
 
         calls = email_database.cursor.execute.call_args_list
 
-        # Check the email_labels insert
-        assert calls[0][0][1] == (email_id, expected_labels_json, category, expected_time)
+        # Check the email_labels insert (call 0 is the prior-labels SELECT)
+        assert calls[1][0][0].strip().startswith("INSERT OR REPLACE INTO email_labels")
+        assert calls[1][0][1] == (email_id, expected_labels_json, category, expected_time)
 
     def test_real_database_integration(self):
         """Test with real SQLite database to ensure actual functionality works."""
@@ -457,6 +464,28 @@ class TestEmailDatabase:
             assert history is not None
             assert history[0] == email_id
             assert json.loads(history[1]) == labels
+
+            db.close()
+
+    def test_update_email_labels_history_records_old_labels(self):
+        """Re-labeling records the prior labels as old_labels, not the new ones."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            db = EmailDatabase(database_file=tmp.name)
+
+            email_id = "relabel_email"
+            db.update_email_labels(email_id, "Work", ["Label_1"])
+            db.update_email_labels(email_id, "Work", ["Label_2", "Label_3"])
+
+            db.cursor.execute(
+                "SELECT old_labels, new_labels FROM label_history "
+                "WHERE email_id = ? ORDER BY id",
+                (email_id,),
+            )
+            first, second = db.cursor.fetchall()
+            # First update: no prior row, so old_labels is NULL
+            assert first == (None, json.dumps(["Label_1"]))
+            # Second update: old_labels is what the first update wrote
+            assert second == (json.dumps(["Label_1"]), json.dumps(["Label_2", "Label_3"]))
 
             db.close()
 
