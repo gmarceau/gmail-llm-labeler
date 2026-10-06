@@ -2,6 +2,8 @@
 
 import json
 import logging
+import os
+import shutil
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -52,6 +54,34 @@ _SUPPORTED_SERVICES = ("openai", "ollama")
 # Model used when the caller doesn't pass one. The pipeline always passes
 # config.transform.model; these defaults only serve standalone LLMService use.
 _DEFAULT_MODELS = {"openai": "gpt-4o-mini", "ollama": "llama3.1"}
+
+# Absolute fallbacks for scheduled-run environments whose PATH omits
+# Homebrew (observed: PATH had ~/.cargo/bin but not /opt/homebrew/bin,
+# so `local["ollama"]` raised CommandNotFound while ollama sat installed).
+_OLLAMA_BIN_CANDIDATES = (
+    "/opt/homebrew/bin/ollama",  # macOS Apple Silicon (Homebrew)
+    "/usr/local/bin/ollama",  # macOS Intel (Homebrew) / manual install
+    "/usr/bin/ollama",  # Linux distro package
+)
+
+
+def _resolve_ollama_binary() -> str:
+    """Find the ollama executable, falling back to absolute paths when PATH is stripped.
+
+    Raises RuntimeError naming the searched locations when nothing is found,
+    so the error says "ollama binary not found" instead of a bare CommandNotFound.
+    """
+    found = shutil.which("ollama")
+    if found:
+        return found
+    for candidate in _OLLAMA_BIN_CANDIDATES:
+        if os.access(candidate, os.X_OK):
+            return candidate
+    raise RuntimeError(
+        "ollama binary not found: not on PATH and none of "
+        + ", ".join(_OLLAMA_BIN_CANDIDATES)
+        + " are executable. Install ollama or add it to PATH."
+    )
 
 
 class LLMService:
@@ -121,7 +151,7 @@ class LLMService:
             pass
 
         logging.info("Ollama not reachable, starting ollama serve...")
-        local["ollama"].popen(["serve"])
+        local[_resolve_ollama_binary()].popen(["serve"])
 
         # Wait up to 10s for it to become ready
         for _ in range(20):

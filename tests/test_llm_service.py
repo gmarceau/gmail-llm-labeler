@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from email_labeler import llm_service as llm_service_module
 from email_labeler.llm_service import LLMCategorizationError, LLMService
 
 # Test categories for all tests
@@ -590,3 +591,51 @@ class TestLLMService:
         messages = call_args[1]["messages"]
 
         assert "Reasoning: high" in messages[0]["content"]
+
+
+class TestResolveOllamaBinary:
+    """The auto-spawn fallback must survive scheduled-run PATHs that omit Homebrew."""
+
+    def test_prefers_path_hit(self):
+        with patch("shutil.which", return_value="/custom/dir/ollama"):
+            assert llm_service_module._resolve_ollama_binary() == "/custom/dir/ollama"
+
+    def test_falls_back_to_absolute_candidates_when_path_is_stripped(self, tmp_path):
+        binary = tmp_path / "ollama"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        with (
+            patch("shutil.which", return_value=None),
+            patch.object(
+                llm_service_module, "_OLLAMA_BIN_CANDIDATES", (str(binary),)
+            ),
+        ):
+            assert llm_service_module._resolve_ollama_binary() == str(binary)
+
+    def test_raises_naming_searched_locations_when_not_found(self):
+        with (
+            patch("shutil.which", return_value=None),
+            patch.object(
+                llm_service_module, "_OLLAMA_BIN_CANDIDATES", ("/nonexistent/ollama",)
+            ),
+        ):
+            with pytest.raises(RuntimeError) as excinfo:
+                llm_service_module._resolve_ollama_binary()
+        assert "/nonexistent/ollama" in str(excinfo.value)
+        assert "ollama binary not found" in str(excinfo.value)
+
+    def test_ensure_ollama_running_spawns_resolved_binary(self):
+        """Server down: spawn uses the resolved absolute path, not a bare PATH lookup."""
+        service = LLMService.__new__(LLMService)  # no __init__: only module state is used
+        with (
+            patch.object(llm_service_module, "local") as mock_local,
+            patch.object(
+                llm_service_module, "_resolve_ollama_binary", return_value="/resolved/ollama"
+            ),
+            patch.object(llm_service_module.httpx, "get", side_effect=[OSError("down"), MagicMock()]),
+            patch.object(llm_service_module.time, "sleep"),
+        ):
+            service._ensure_ollama_running()
+
+        mock_local.__getitem__.assert_called_once_with("/resolved/ollama")
+        mock_local.__getitem__.return_value.popen.assert_called_once_with(["serve"])
