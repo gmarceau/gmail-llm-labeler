@@ -32,7 +32,11 @@ pipeline:
 #    model: "qwen2.5:3b"  # 3b is faster, worth trying
     temperature: 0  # Deterministic classification
     max_content_length: 6000
-    timeout: 120  # Longer timeout for larger model
+    # Per-request LLM timeout. One warm qwen2.5:7b runner answers in 3-7s
+    # typical / ~10-20s with a cold model load. 45s fails a truly hung call
+    # fast instead of parking the batch 120s per email — the 2026-10-06
+    # incident burned 5×120s on wedged calls (see llm_service _CTX_LADDER).
+    timeout: 45
     skip_on_error: true
 
     categories:

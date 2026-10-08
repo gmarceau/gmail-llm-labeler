@@ -555,10 +555,11 @@ class TestColdOutreachConfig:
         assert service.model == "qwen2.5:7b"
 
     def test_llm_timeout_flows_from_yaml_into_service(self, prod_config):
-        """Bead omm: the production yaml's transform.timeout (120 for the 7b
-        model) flows into the LLMService the pipeline constructs — where it
-        reaches the OpenAI client constructor as the request timeout."""
-        assert prod_config.transform.timeout == 120
+        """Bead omm: the production yaml's transform.timeout (45 for the 7b
+        model: 3-7s warm, ~20s cold, 45s fails hung calls fast) flows into
+        the LLMService the pipeline constructs — where it reaches the OpenAI
+        client constructor as the request timeout."""
+        assert prod_config.transform.timeout == 45
 
         service = LLMService(
             categories=prod_config.transform.categories,
@@ -567,7 +568,7 @@ class TestColdOutreachConfig:
             llm_client=MagicMock(),
         )
 
-        assert service.timeout == 120
+        assert service.timeout == 45
 
 
 class TestPathConfig:

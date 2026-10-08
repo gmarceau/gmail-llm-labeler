@@ -682,16 +682,20 @@ class TestClientTimeout:
 
 
 class TestOllamaNumCtx:
-    """Every ollama request sizes its context window to its prompt (bead 0km).
+    """Every ollama request sizes its context window via the _CTX_LADDER (bead 0km).
 
     Nothing ever set num_ctx, so long prompts silently clipped to the server's
     default context (2048/4096) and produced empty or degenerate completions.
-    The native /api/chat call now carries options.num_ctx computed from the
-    actual messages, so the prompt always fits.
+    The native /api/chat call now carries options.num_ctx that covers the
+    prompt — and, since ollama spawns a private runner for every distinct
+    context size, snaps to a coarse ladder so one warm runner serves the
+    whole batch (2026-10-06 runner-stampede: per-prompt sizes left five
+    qwen2.5:7b runners on a 16GB M1 and runs timed out in swap).
     """
 
-    def test_num_ctx_sizes_from_actual_prompt(self):
-        """Formula: prompt chars / 4 (conservative) + response budget + slack."""
+    def test_num_ctx_covers_prompt_and_snaps_to_ladder(self):
+        """Needed-tokens estimate (chars/4 + response budget + slack) rounds
+        UP to the next ladder rung: 4000 chars -> 2012 needed -> 2048."""
         service = LLMService(
             categories=TEST_CATEGORIES,
             max_content_length=6000,
@@ -700,10 +704,32 @@ class TestOllamaNumCtx:
         )
         messages = [{"role": "user", "content": "x" * 4000}]
 
-        assert service._num_ctx(messages) == 4000 // 4 + 500 + 512
+        assert service._num_ctx(messages) == 2048
+
+    def test_num_ctx_quantizes_incident_prompts_to_one_rung(self):
+        """The 2026-10-06 wedge reproduced: two wedged prompt lengths.
+
+        The incident's timed-out emails prompted num_ctx 2494 and 2513
+        ((2494-1012)*4 = 5928 and (2513-1012)*4 = 6004 prompt chars) — two
+        distinct sizes, so ollama had no matching warm runner and spawned a
+        fresh 4.7GB model copy mid-run (into 28GB of swap: the >120s
+        timeouts). Both must now snap to the same 4096 rung so the second
+        request reuses the first one's runner.
+        """
+        service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=6000,
+            service="ollama",
+            lazy_init=True,
+        )
+        rung_a = service._num_ctx([{"role": "user", "content": "x" * 5928}])
+        rung_b = service._num_ctx([{"role": "user", "content": "x" * 6004}])
+
+        assert rung_a == rung_b == 4096
 
     def test_num_ctx_exceeds_default_context_for_production_emails(self):
-        """A max_content_length=6000 email clears the historical 2048 default."""
+        """A max_content_length=6000 email clears the historical 2048 default
+        (the silent-clip failure mode), landing on the 4096 rung."""
         service = LLMService(
             categories=TEST_CATEGORIES,
             max_content_length=6000,
@@ -712,7 +738,37 @@ class TestOllamaNumCtx:
         )
         messages = [{"role": "user", "content": "Subject: review\n\n" + "word " * 1200}]
 
-        assert service._num_ctx(messages) > 2048
+        assert service._num_ctx(messages) == 4096
+
+    def test_num_ctx_fits_largest_observed_prompt_on_4096(self):
+        """The biggest production prompt seen in the interaction log (~12.2k
+        message chars, from the pre-ladder era when -c 4096 runners spawned)
+        still fits the 4096 rung with headroom for the response budget."""
+        service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=6000,
+            service="ollama",
+            lazy_init=True,
+        )
+        messages = [{"role": "user", "content": "x" * 12200}]
+
+        # needed = 12200//4 + 500 + 512 = 4062 -> snapped to 4096
+        assert service._num_ctx(messages) == 4096
+
+    def test_num_ctx_beyond_ladder_serves_unquantized(self):
+        """A prompt larger than the top rung keeps its exact size — clipping a
+        real prompt would recreate the empty-completion failure mode that
+        motivated num_ctx in the first place, so quantization yields."""
+        service = LLMService(
+            categories=TEST_CATEGORIES,
+            max_content_length=6000,
+            service="ollama",
+            lazy_init=True,
+        )
+        messages = [{"role": "user", "content": "x" * 30000}]
+
+        # needed = 30000//4 + 500 + 512 = 8512 > 8192
+        assert service._num_ctx(messages) == 8512
 
     def test_request_carries_num_ctx_options(self):
         """The native call carries options.num_ctx sized for the prompt."""

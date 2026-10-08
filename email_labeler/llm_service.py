@@ -58,6 +58,18 @@ _DEFAULT_MODELS = {"openai": "gpt-4o-mini", "ollama": "llama3.1"}
 # Response budget per request — flows to OpenAI max_tokens / ollama num_predict.
 _MAX_TOKENS = 500
 
+# Context-size buckets for ollama num_ctx (see LLMService._num_ctx). ollama
+# spawns a fresh llama-server — with its own private copy of the model
+# weights — for every distinct context size instead of reusing a loaded
+# runner that could serve the request. Requesting num_ctx proportionate to
+# each prompt therefore accumulated duplicate runners until memory pressure
+# wedged the machine (2026-10-06 incident: five qwen2.5:7b runners resident
+# on a 16GB M1, 28GB of swap in use; a mid-run spawn took >120s to load and
+# five consecutive emails timed out — the "Shortcuts automation timed out"
+# report). All requests must snap to one of a few coarse sizes so a single
+# warm runner serves the whole batch.
+_CTX_LADDER = (2048, 4096, 8192)
+
 # Absolute fallbacks for scheduled-run environments whose PATH omits
 # Homebrew (observed: PATH had ~/.cargo/bin but not /opt/homebrew/bin,
 # so `local["ollama"]` raised CommandNotFound while ollama sat installed).
@@ -327,7 +339,10 @@ class LLMService:
         reaches the runner) and silently clips oversized prompts to ~2k tokens
         with degenerate output — the empty-completion failure mode of
         2026-10-04. The native endpoint honors options, so the ollama service
-        speaks it directly: one transport, no dummy api key.
+        speaks it directly: one transport, no dummy api key. num_ctx comes
+        from _num_ctx's coarse ladder, not the raw prompt length, so ollama
+        keeps one loaded runner instead of spawning a private model copy per
+        distinct prompt size (the 2026-10-06 runner-stampede incident).
         """
         self._ensure_ollama_running()
         response = httpx.post(
@@ -348,14 +363,27 @@ class LLMService:
         return response.json()["message"]["content"]
 
     def _num_ctx(self, messages: list) -> int:
-        """Context window for one ollama request, sized from the actual prompt.
+        """Context window for one ollama request: sized to cover the prompt,
+        then snapped UP the _CTX_LADDER to the next coarse bucket.
 
-        Prompt tokens are over-estimated at 4 chars per token (English runs
-        4-5), then the response budget and slack are added on top, so the
-        prompt never gets clipped regardless of the server's default context.
+        Needed tokens are over-estimated at 4 chars per token (English runs
+        4-5) plus the response budget and slack, so the prompt is never
+        clipped — then the ladder quantizes the result so requests of
+        similar size hit the same num_ctx and ollama reuses its loaded
+        runner instead of spawning a duplicate one (see _CTX_LADDER).
         """
-        prompt_chars = sum(len(message["content"]) for message in messages)
-        return prompt_chars // 4 + _MAX_TOKENS + 512
+        needed = (
+            sum(len(message["content"]) for message in messages) // 4
+            + _MAX_TOKENS
+            + 512
+        )
+        for step in _CTX_LADDER:
+            if needed <= step:
+                return step
+        # Beyond the ladder. This pipeline's prompts stay far below it in
+        # practice (user prompt ~3.5k chars + max_content_length), so this
+        # is a degenerate case — serve it unquantized rather than clip.
+        return needed
 
     def _parse_response(self, response_text: str, subject: str = "Unknown") -> Tuple[str, str]:
         """Parse and validate the LLM response.
