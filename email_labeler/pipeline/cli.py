@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pydash
@@ -36,20 +37,35 @@ class _ExecuteOnlyInfo(logging.Filter):
         return record.funcName == "execute"
 
 
-def setup_logging(verbosity: int):
-    """Set up logging based on verbosity level."""
+def setup_logging(verbosity: int, log_file=None):
+    """Set up logging based on verbosity level, optionally also to a file.
+
+    log_file, when given, attaches a FileHandler to the root logger so every
+    record (console output included) is also written there — this is what lets
+    a scheduled run (no terminal of its own) leave a diagnosable trail, while an
+    interactive run still sees the same output live via the existing console
+    handler. The handler is added directly rather than through
+    basicConfig(handlers=...): email_labeler.config already runs its own
+    basicConfig() at import time, so this module's call is a no-op for anything
+    but the explicit setLevel below.
+    """
     levels = [logging.INFO, logging.INFO, logging.DEBUG]
     level = levels[min(verbosity, len(levels) - 1)]
+    fmt = "%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
 
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    logging.basicConfig(level=level, format=fmt, datefmt=datefmt)
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    if log_file is not None:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+        root.addHandler(file_handler)
 
     if verbosity == 0:
         _f = _ExecuteOnlyInfo()
-        for handler in logging.getLogger().handlers:
+        for handler in root.handlers:
             handler.addFilter(_f)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -417,18 +433,50 @@ def review_senders(args):
     return 0
 
 
+RUN_LOG_RETENTION_DAYS = 14
+
+
+def _resolve_run_log_path(config_path):
+    """Resolve this run's log file path, pruning logs past the retention window first.
+
+    Backs the per-run file handler set up in main() for the `run` command, so a
+    scheduled run (which gets no stdout/stderr of its own from launch-labeler)
+    still leaves a diagnosable trail. The log directory comes from config
+    (paths.pipeline_log_dir); naming the new file and pruning old ones are plain
+    Python rather than shell `date`/`find -delete`.
+    """
+    log_dir = PathConfig(config_file=config_path).pipeline_log_dir
+
+    cutoff = datetime.now() - timedelta(days=RUN_LOG_RETENTION_DAYS)
+    for old_log in log_dir.glob("pipeline-*.log"):
+        if datetime.fromtimestamp(old_log.stat().st_mtime) < cutoff:
+            old_log.unlink()
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return log_dir / f"pipeline-{timestamp}.log"
+
+
 def main():
     """Main entry point."""
     parser = create_parser()
     args = parser.parse_args()
 
-    # Set up logging
+    # Set up logging. `run` additionally logs to a per-run file (see
+    # _resolve_run_log_path) — it's the command bin/launch-labeler schedules via
+    # Shortcuts, which gets no stdout/stderr of its own to diagnose a crash from.
+    log_file = None
+    if args.command == "run" and getattr(args, "config", None):
+        log_file = _resolve_run_log_path(args.config)
     if hasattr(args, "verbose"):
-        setup_logging(args.verbose)
+        setup_logging(args.verbose, log_file=log_file)
 
     # Execute command
     if args.command == "run":
-        return run_pipeline(args)
+        try:
+            return run_pipeline(args)
+        except Exception:
+            logging.critical("Pipeline run crashed", exc_info=True)
+            return 1
     elif args.command == "run-stage":
         return run_stage(args)
     elif args.command == "generate-config":

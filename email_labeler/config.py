@@ -69,6 +69,7 @@ class PathsConfig(BaseModel):
     error_log_file: Optional[str] = None
     test_output_file: Optional[str] = None
     test_summary_file: Optional[str] = None
+    pipeline_log_dir: Optional[str] = None
 
 
 class PathConfig:
@@ -87,6 +88,9 @@ class PathConfig:
     """
 
     # Default (directory, filename) per path key, keyed by PathsConfig field name.
+    # An empty filename means the key is itself a directory (see pipeline_log_dir)
+    # rather than a file within one; _ensure_directories below creates that
+    # directory itself instead of only its parent.
     # PathsConfig owns the KEY SET; this table only supplies each key's default
     # location. A key added to PathsConfig but missing here fails loudly (KeyError).
     _DEFAULT_LOCATIONS = {
@@ -95,6 +99,7 @@ class PathConfig:
         "error_log_file": ("logs", "categorization_errors.log"),
         "test_output_file": ("data", "test_results.csv"),
         "test_summary_file": ("data", "test_summary.json"),
+        "pipeline_log_dir": ("logs", ""),
     }
 
     def __init__(self, config_file: Optional[str] = None):
@@ -172,10 +177,18 @@ class PathConfig:
             return default_value.resolve()
 
     def _ensure_directories(self):
-        """Create parent directories for all configured paths if they don't exist."""
+        """Create parent directories for all configured paths if they don't exist.
+
+        A key whose default filename is empty (see _DEFAULT_LOCATIONS) is itself
+        a directory, so it's created directly rather than via its parent.
+        """
         for key in PathsConfig.model_fields:
             path = getattr(self, key)
-            path.parent.mkdir(parents=True, exist_ok=True)
+            _, default_file = self._DEFAULT_LOCATIONS[key]
+            if default_file == "":
+                path.mkdir(parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
 
     def to_dict(self) -> dict:
         """Export configuration as dictionary.

@@ -596,6 +596,9 @@ class TestPathConfig:
 
         assert config.database_file == get_default_data_dir() / "email_pipeline.db"
         assert config.llm_log_file == get_default_log_dir() / "llm_interactions.json"
+        # pipeline_log_dir is itself a directory (empty filename in _DEFAULT_LOCATIONS),
+        # so it resolves to the bare default log dir rather than a file within it.
+        assert config.pipeline_log_dir == get_default_log_dir()
 
     def test_null_paths_block_loads_defaults(self, tmp_path):
         # `paths:` with nothing under it parses as {paths: None}
